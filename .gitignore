@@ -1,0 +1,9 @@
+.DS_Store
+.env
+*.log
+/dist
+/tmp
+.pi/
+.terraform/
+.terraform.lock.hcl
+terraform.tfstate*
