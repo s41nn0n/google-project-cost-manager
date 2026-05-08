@@ -69,9 +69,17 @@ func Run(ctx context.Context, cfg *config.Config, lister BudgetLister, resolver 
 	if lister == nil {
 		return Result{}, fmt.Errorf("budget lister is required")
 	}
-	budgets, err := lister.ListBudgets(ctx, cfg.Reconcile.BillingAccountName)
-	if err != nil {
-		return Result{}, err
+	accounts := cfg.Reconcile.EffectiveBillingAccountNames()
+	if len(accounts) == 0 {
+		return Result{}, fmt.Errorf("at least one reconcile billing account is required")
+	}
+	var budgets []Budget
+	for _, account := range accounts {
+		accountBudgets, err := lister.ListBudgets(ctx, account)
+		if err != nil {
+			return Result{}, fmt.Errorf("list budgets for %s: %w", account, err)
+		}
+		budgets = append(budgets, accountBudgets...)
 	}
 	r := Result{SourceOfTruth: cfg.Reconcile.SourceOfTruth, Mode: cfg.Reconcile.Mode}
 	r.Summary.GCPBudgets = len(budgets)

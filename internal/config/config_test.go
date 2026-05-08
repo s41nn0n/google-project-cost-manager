@@ -41,6 +41,35 @@ selfTest:
 	if c.Reconcile.SourceOfTruth != "gcp_budgets" || c.Reconcile.Mode != "diff_only" {
 		t.Fatalf("defaults not applied: %+v", c.Reconcile)
 	}
+	accounts := c.Reconcile.EffectiveBillingAccountNames()
+	if len(accounts) != 1 || accounts[0] != "billingAccounts/123" {
+		t.Fatalf("legacy account not effective: %#v", accounts)
+	}
+}
+
+func TestParseReconcileMultipleBillingAccounts(t *testing.T) {
+	c, err := Parse([]byte(`reconcile:
+  enabled: true
+  billingAccountNames:
+  - billingAccounts/123
+  - billingAccounts/456
+  - billingAccounts/123
+  billingAccountName: billingAccounts/789
+  requiredPubSubTopic: projects/core/topics/t
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"billingAccounts/123", "billingAccounts/456", "billingAccounts/789"}
+	got := c.Reconcile.EffectiveBillingAccountNames()
+	if len(got) != len(want) {
+		t.Fatalf("effective accounts = %#v, want %#v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("effective accounts = %#v, want %#v", got, want)
+		}
+	}
 }
 
 func TestParseRejectsBadReconcileConfig(t *testing.T) {

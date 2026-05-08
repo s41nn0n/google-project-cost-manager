@@ -95,7 +95,8 @@ reconcile:
   enabled: true
   sourceOfTruth: gcp_budgets
   mode: diff_only
-  billingAccountName: billingAccounts/000000-000000-000000
+  billingAccountNames:
+    - billingAccounts/000000-000000-000000
   requiredPubSubTopic: projects/my-billing-guard-core/topics/billing-budget-alerts
 
 budgets:
@@ -303,7 +304,7 @@ For an existing budget:
 projects/my-billing-guard-core/topics/billing-budget-alerts
 ```
 
-Make sure the budget display name or resource name matches one of the `budgets[].names` values in your config. Set `reconcile.requiredPubSubTopic` to this exact topic and `reconcile.billingAccountName` to the parent billing account, for example `billingAccounts/000000-000000-000000`.
+Make sure the budget display name or resource name matches one of the `budgets[].names` values in your config. Set `reconcile.requiredPubSubTopic` to this exact topic and `reconcile.billingAccountNames` to the parent billing account(s), for example `billingAccounts/000000-000000-000000`. `reconcile.billingAccountName` remains available as a legacy single-account shorthand.
 
 ## 9. Validate budget setup with read-only reconciliation
 

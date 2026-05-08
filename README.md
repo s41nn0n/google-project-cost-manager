@@ -25,11 +25,12 @@ reconcile:
   enabled: true
   sourceOfTruth: gcp_budgets
   mode: diff_only
-  billingAccountName: billingAccounts/000000-000000-000000
+  billingAccountNames:
+    - billingAccounts/000000-000000-000000
   requiredPubSubTopic: projects/CORE_PROJECT/topics/billing-budget-alerts
 ```
 
-`POST /reconcile` never mutates GCP. Error severity diffs indicate critical setup problems, such as configured budgets missing in GCP or Pub/Sub topic mismatch. Warning diffs indicate drift to review.
+`POST /reconcile` never mutates GCP. Prefer `reconcile.billingAccountNames` for one or more accounts; `reconcile.billingAccountName` remains supported as a legacy single-account shorthand. Error severity diffs indicate critical setup problems, such as configured budgets missing in GCP or Pub/Sub topic mismatch. Warning diffs indicate drift to review.
 
 ## IAM and endpoint security
 

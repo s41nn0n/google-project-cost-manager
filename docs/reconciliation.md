@@ -33,11 +33,12 @@ reconcile:
   enabled: true
   sourceOfTruth: gcp_budgets
   mode: diff_only
-  billingAccountName: billingAccounts/000000-000000-000000
+  billingAccountNames:
+    - billingAccounts/000000-000000-000000
   requiredPubSubTopic: projects/CORE_PROJECT/topics/billing-budget-alerts
 ```
 
-`billingAccountName` is required when `reconcile.enabled: true`; the app uses it as the Billing Budgets API parent for `billingAccounts/{id}/budgets:list` and does not infer a billing account from display names.
+At least one effective billing account is required when `reconcile.enabled: true`. Prefer `billingAccountNames` for one or more accounts. `billingAccountName` remains supported as a legacy single-account shorthand; if both fields are set, accounts are de-duplicated in order and both are reconciled. The app uses each account as the Billing Budgets API parent for `billingAccounts/{id}/budgets:list` and does not infer billing accounts from display names.
 
 Default mode is `diff_only`. The app reports differences but does not change GCP budgets.
 

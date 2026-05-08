@@ -16,7 +16,10 @@ reconcile:
   enabled: true
   sourceOfTruth: gcp_budgets
   mode: diff_only
-  billingAccountName: billingAccounts/000000-000000-000000
+  billingAccountNames:
+    - billingAccounts/000000-000000-000000
+  # Legacy single-account shorthand; billingAccountNames is preferred.
+  # billingAccountName: billingAccounts/000000-000000-000000
   requiredPubSubTopic: projects/YOUR_CORE_PROJECT/topics/billing-budget-alerts
 # Budget entries below are enforcement policy only. They do not create, update,
 # or delete GCP Billing Budgets.

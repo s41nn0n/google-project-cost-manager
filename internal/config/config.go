@@ -30,11 +30,12 @@ type Config struct {
 }
 
 type ReconcileConfig struct {
-	Enabled             bool   `yaml:"enabled" json:"enabled"`
-	SourceOfTruth       string `yaml:"sourceOfTruth" json:"sourceOfTruth"`
-	Mode                string `yaml:"mode" json:"mode"`
-	BillingAccountName  string `yaml:"billingAccountName" json:"billingAccountName"`
-	RequiredPubSubTopic string `yaml:"requiredPubSubTopic" json:"requiredPubSubTopic"`
+	Enabled             bool     `yaml:"enabled" json:"enabled"`
+	SourceOfTruth       string   `yaml:"sourceOfTruth" json:"sourceOfTruth"`
+	Mode                string   `yaml:"mode" json:"mode"`
+	BillingAccountName  string   `yaml:"billingAccountName" json:"billingAccountName"`
+	BillingAccountNames []string `yaml:"billingAccountNames" json:"billingAccountNames"`
+	RequiredPubSubTopic string   `yaml:"requiredPubSubTopic" json:"requiredPubSubTopic"`
 }
 
 type Defaults struct {
@@ -193,8 +194,8 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("reconcile.mode must be diff_only")
 	}
 	if c.Reconcile.Enabled {
-		if c.Reconcile.BillingAccountName == "" {
-			return errors.New("reconcile.billingAccountName is required when reconcile.enabled is true")
+		if len(c.Reconcile.EffectiveBillingAccountNames()) == 0 {
+			return errors.New("at least one of reconcile.billingAccountNames or reconcile.billingAccountName is required when reconcile.enabled is true")
 		}
 		if c.Reconcile.RequiredPubSubTopic == "" {
 			return errors.New("reconcile.requiredPubSubTopic is required when reconcile.enabled is true")
@@ -212,6 +213,23 @@ func (c *Config) Validate() error {
 		}
 	}
 	return nil
+}
+
+func (r ReconcileConfig) EffectiveBillingAccountNames() []string {
+	seen := map[string]bool{}
+	var accounts []string
+	add := func(name string) {
+		if name == "" || seen[name] {
+			return
+		}
+		seen[name] = true
+		accounts = append(accounts, name)
+	}
+	for _, name := range r.BillingAccountNames {
+		add(name)
+	}
+	add(r.BillingAccountName)
+	return accounts
 }
 
 func validAction(a string) bool {
