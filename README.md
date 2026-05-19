@@ -55,4 +55,5 @@ See `deployments/terraform` for an example Cloud Run deployment. It enables requ
 
 - [Using this repo in your Google project](docs/using-in-your-google-project.md)
 - [Reconciliation and setup validation](docs/reconciliation.md)
+- [AI Task Manager operating guide](docs/ai-task-manager.md)
 - [ADR 0001: GCP Billing Budgets are the source of truth](docs/adr/0001-billing-budgets-source-of-truth.md)
