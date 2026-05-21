@@ -214,8 +214,8 @@ resource "google_cloud_scheduler_job" "self_test" {
     uri         = "${google_cloud_run_v2_service.app.uri}/self-test"
     # Empty body lets the service use selfTest.mode from config. To force a mode,
     # change this to base64encode(jsonencode({ mode = "dry_run" })).
-    body        = base64encode(jsonencode({}))
-    headers     = { "Content-Type" = "application/json" }
+    body    = base64encode(jsonencode({}))
+    headers = { "Content-Type" = "application/json" }
     oidc_token {
       service_account_email = google_service_account.scheduler_invoker.email
       audience              = google_cloud_run_v2_service.app.uri

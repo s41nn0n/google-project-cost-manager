@@ -1,0 +1,9 @@
+.git
+.github
+.pi
+.terraform
+.terraform.lock.hcl
+terraform.tfstate*
+.env
+*.log
+.DS_Store

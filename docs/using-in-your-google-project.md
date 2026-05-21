@@ -42,7 +42,7 @@ You need:
 - A Cloud Billing account.
 - Permission to deploy Cloud Run, Pub/Sub, Scheduler, Secret Manager, and service accounts in the core project.
 - Permission to grant billing IAM on the Billing Account, usually from a Billing Account Administrator.
-- Docker or Cloud Build to build the container image.
+- Docker or Cloud Build to build and publish the container image.
 - Terraform if using the Terraform example.
 
 Recommended local tools:
@@ -209,7 +209,9 @@ selfTest:
 
 ## 5. Build and publish the container
 
-Example using Artifact Registry:
+GitHub releases are created by Release Please, but this repository does not currently publish release images to a container registry. Build and publish an image in your own Google Cloud project, then pass that exact image reference to Terraform.
+
+Example using Artifact Registry with a version-like tag:
 
 ```sh
 gcloud artifacts repositories create billing-guard \
@@ -219,24 +221,36 @@ gcloud artifacts repositories create billing-guard \
 
 gcloud builds submit \
   --project=my-billing-guard-core \
-  --tag us-central1-docker.pkg.dev/my-billing-guard-core/billing-guard/billing-guard:latest
+  --tag us-central1-docker.pkg.dev/my-billing-guard-core/billing-guard/billing-guard:v0.1.0
+```
+
+For local build validation before publishing, you can run:
+
+```sh
+docker build -t billing-guard:ci .
 ```
 
 ## 6. Deploy with Terraform
 
 The repo includes an example in `deployments/terraform`.
 
-Create `terraform.tfvars`:
+Create `terraform.tfvars` with the image you published:
 
 ```hcl
 project_id = "my-billing-guard-core"
 region     = "us-central1"
-image      = "us-central1-docker.pkg.dev/my-billing-guard-core/billing-guard/billing-guard:latest"
+image      = "us-central1-docker.pkg.dev/my-billing-guard-core/billing-guard/billing-guard:v0.1.0"
 
 # Recommended: create config secret out-of-band and pass its id.
 existing_config_secret_id = "projects/my-billing-guard-core/secrets/billing-guard-config"
 
 scheduler_cron = "0 8 * * *"
+```
+
+You can also pass or override the image at apply time:
+
+```sh
+terraform apply -var='image=us-central1-docker.pkg.dev/my-billing-guard-core/billing-guard/billing-guard:v0.1.0'
 ```
 
 Then run:

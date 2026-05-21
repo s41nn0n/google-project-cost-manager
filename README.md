@@ -1,5 +1,7 @@
 # GCP Project Cost Manager / Billing Guard
 
+[![CI](https://github.com/s41nn0n/google-project-cost-manager/actions/workflows/ci.yml/badge.svg)](https://github.com/s41nn0n/google-project-cost-manager/actions/workflows/ci.yml)
+
 Open-source Go Cloud Run service that receives Cloud Billing Budget Pub/Sub alerts and can dry-run or disable billing on configured projects.
 
 GCP Cloud Billing Budgets are the source of truth for budget existence, scope, thresholds, and Pub/Sub wiring. App config is enforcement policy only and does not create, update, or delete budgets.
@@ -44,12 +46,32 @@ Deploy Cloud Run as a private service; do **not** grant `allUsers`/unauthenticat
 
 ## Development
 
+CI runs Go, Docker, and Terraform validation without GCP credentials. Run the same checks locally before opening a pull request:
+
 ```sh
+test -z "$(gofmt -l .)"
 go test ./...
-docker build -t billing-guard .
+go vet ./...
+docker build -t billing-guard:ci .
+terraform -chdir=deployments/terraform fmt -check -recursive
+terraform -chdir=deployments/terraform init -backend=false -input=false
+terraform -chdir=deployments/terraform validate
 ```
 
 See `deployments/terraform` for an example Cloud Run deployment. It enables required project APIs and creates the Pub/Sub push path; `billing_account_id` only creates an optional sample/bootstrap Cloud Billing Budget wired to the Pub/Sub topic.
+
+## Releases
+
+Releases are managed by Release Please from Conventional Commits on `main`:
+
+- `feat: ...` creates a feature entry and normally a minor version bump.
+- `fix: ...` creates a bug-fix entry and normally a patch version bump.
+- `docs:` and `chore:` commits are included in the generated `CHANGELOG.md` when part of a release.
+- Breaking changes should use `!` in the commit type, such as `feat!: ...`, or a `BREAKING CHANGE:` footer.
+
+Release Please opens or updates a release PR. When that PR is merged, it creates the GitHub tag, GitHub release, and changelog update. The repository starts from `.release-please-manifest.json` version `0.0.0`, so maintainers should review the first release PR carefully because there are no existing tags.
+
+This repository does not currently publish Docker images as part of the release workflow. Build and publish your own image for deployment, then pass that image reference to Terraform.
 
 ## Design decisions
 
