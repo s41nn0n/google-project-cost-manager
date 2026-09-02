@@ -5,5 +5,4 @@
 /tmp
 .pi/
 .terraform/
-.terraform.lock.hcl
 terraform.tfstate*

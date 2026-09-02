@@ -1,0 +1,208 @@
+package discovery
+
+import (
+	"context"
+	"fmt"
+	"strings"
+)
+
+type Client interface {
+	ListProjects(context.Context, string) ([]Project, error)
+	ListBillingAccounts(context.Context, string) ([]BillingAccount, error)
+	GetProjectBilling(context.Context, string) (BillingLink, error)
+	ListBudgets(context.Context, string) ([]ExistingBudget, error)
+}
+
+func Scan(ctx context.Context, organization string, policy ReviewedPolicy, client Client) (Result, error) {
+	policy.ApplyDefaults()
+	if !strings.HasPrefix(organization, "organizations/") {
+		return Result{}, fmt.Errorf("organization must use organizations/ID form")
+	}
+	if err := policy.Validate(); err != nil {
+		return Result{}, err
+	}
+	projects, err := client.ListProjects(ctx, organization)
+	if err != nil {
+		return Result{}, fmt.Errorf("discover organization projects: %w", err)
+	}
+	accounts, err := client.ListBillingAccounts(ctx, organization)
+	if err != nil {
+		return Result{}, fmt.Errorf("list organization billing accounts: %w", err)
+	}
+
+	result := Result{Inventory: Inventory{SchemaVersion: 1, Organization: organization, BillingAccounts: accounts}, Coverage: Coverage{Classifications: map[string]int{}, Complete: true}}
+	accountSet := map[string]bool{}
+	budgets := map[string][]ExistingBudget{}
+	inaccessibleAccounts := map[string]bool{}
+	for _, account := range accounts {
+		accountSet[account.Name] = true
+		if configured, ok := policy.BillingAccounts[account.Name]; !ok || configured.DefaultMonthlyAmount <= 0 {
+			result.Diagnostics = append(result.Diagnostics, Diagnostic{Code: "missing_default_amount", Severity: "error", BillingAccount: account.Name, Message: "every discovered billing account requires a positive defaultMonthlyAmount"})
+			result.Coverage.Complete = false
+		}
+		listed, listErr := client.ListBudgets(ctx, account.Name)
+		if listErr != nil {
+			inaccessibleAccounts[account.Name] = true
+			result.Diagnostics = append(result.Diagnostics, Diagnostic{Code: "billing_account_inaccessible", Severity: "error", BillingAccount: account.Name, Message: listErr.Error()})
+			result.Coverage.Complete = false
+			continue
+		}
+		for i := range listed {
+			listed[i].Classification = "externally_owned"
+		}
+		budgets[account.Name] = listed
+		result.Inventory.Budgets = append(result.Inventory.Budgets, listed...)
+	}
+
+	for _, project := range projects {
+		entry := ProjectInventory{Project: project}
+		if project.LifecycleState != "ACTIVE" {
+			entry.Classification, entry.Reason = ClassInactive, "project lifecycle state is "+project.LifecycleState
+			result.addProject(entry)
+			continue
+		}
+		link, linkErr := client.GetProjectBilling(ctx, project.ProjectID)
+		if linkErr != nil {
+			entry.Classification, entry.Reason = ClassBlocked, "billing visibility: "+linkErr.Error()
+			result.Diagnostics = append(result.Diagnostics, Diagnostic{Code: "project_billing_inaccessible", Severity: "error", ProjectID: project.ProjectID, Message: linkErr.Error()})
+			result.Coverage.Complete = false
+			result.addProject(entry)
+			continue
+		}
+		entry.BillingLink = link
+		if reason, ok := policy.ProtectedProjects[project.ProjectID]; ok || project.ProjectID == policy.ControlProjectID {
+			entry.Classification = ClassProtected
+			if project.ProjectID == policy.ControlProjectID {
+				entry.Reason = "FinOps control plane project (automatically protected)"
+			} else {
+				entry.Reason = reason
+			}
+			result.addProject(entry)
+			continue
+		}
+		if !link.BillingEnabled || link.BillingAccountName == "" {
+			entry.Classification, entry.Reason = ClassUnbilled, "project has no active billing link"
+			result.addProject(entry)
+			continue
+		}
+		if inaccessibleAccounts[link.BillingAccountName] {
+			entry.Classification, entry.Reason = ClassBlocked, "billing budgets are not visible for the linked account"
+			result.Coverage.Complete = false
+			result.addProject(entry)
+			continue
+		}
+		if !accountSet[link.BillingAccountName] {
+			entry.Classification, entry.Reason = ClassBlocked, "linked billing account is not visible under the organization"
+			result.Diagnostics = append(result.Diagnostics, Diagnostic{Code: "billing_account_not_discovered", Severity: "error", ProjectID: project.ProjectID, BillingAccount: link.BillingAccountName, Message: entry.Reason})
+			result.Coverage.Complete = false
+			result.addProject(entry)
+			continue
+		}
+		accountPolicy, configured := policy.BillingAccounts[link.BillingAccountName]
+		if !configured || accountPolicy.DefaultMonthlyAmount <= 0 {
+			entry.Classification, entry.Reason = ClassBlocked, "billing account has no positive default monthly amount"
+			result.Diagnostics = append(result.Diagnostics, Diagnostic{Code: "missing_default_amount", Severity: "error", ProjectID: project.ProjectID, BillingAccount: link.BillingAccountName, Message: entry.Reason})
+			result.Coverage.Complete = false
+			result.addProject(entry)
+			continue
+		}
+		entry.Classification = ClassManaged
+		entry.MonthlyAmount = accountPolicy.DefaultMonthlyAmount
+		if override := accountPolicy.ProjectOverrides[project.ProjectID]; override > 0 {
+			entry.MonthlyAmount = override
+		}
+		entry.CurrencyCode = accountPolicy.CurrencyCode
+		entry.CanonicalDisplayName = "billing-guard-" + project.ProjectID
+		entry.ExistingBudgets = budgetsForProject(budgets[link.BillingAccountName], project.ProjectNumber)
+		compatible := compatibleBudgets(entry.ExistingBudgets, entry, policy)
+		switch len(compatible) {
+		case 0:
+			entry.BudgetClassification = "create_canonical"
+		case 1:
+			entry.BudgetClassification = "exact_import_candidate"
+			entry.ImportCandidate = compatible[0].Name
+			for i := range entry.ExistingBudgets {
+				if entry.ExistingBudgets[i].Name == compatible[0].Name {
+					entry.ExistingBudgets[i].Classification = "exact_import_candidate"
+				}
+			}
+			for i := range result.Inventory.Budgets {
+				if result.Inventory.Budgets[i].Name == compatible[0].Name {
+					result.Inventory.Budgets[i].Classification = "exact_import_candidate"
+				}
+			}
+			result.Imports = append(result.Imports, ImportCandidate{
+				BillingAccountName: link.BillingAccountName,
+				ProjectID:          project.ProjectID,
+				TerraformAddress:   fmt.Sprintf("module.billing_account[\"%s\"].google_billing_budget.project[\"%s\"]", link.BillingAccountName, project.ProjectID),
+				RemoteID:           compatible[0].Name,
+			})
+		default:
+			entry.Classification, entry.BudgetClassification, entry.Reason = ClassBlocked, "ambiguous_import_candidates", "more than one existing budget exactly matches the canonical policy"
+			result.Diagnostics = append(result.Diagnostics, Diagnostic{Code: "ambiguous_budget_match", Severity: "error", ProjectID: project.ProjectID, BillingAccount: link.BillingAccountName, Message: entry.Reason})
+			result.Coverage.Complete = false
+		}
+		result.addProject(entry)
+	}
+	result.Normalize()
+	return result, nil
+}
+
+func (r *Result) addProject(project ProjectInventory) {
+	r.Inventory.Projects = append(r.Inventory.Projects, project)
+	r.Coverage.TotalProjects++
+	r.Coverage.Classifications[project.Classification]++
+}
+
+func budgetsForProject(all []ExistingBudget, projectNumber string) []ExistingBudget {
+	want := "projects/" + projectNumber
+	var out []ExistingBudget
+	for _, budget := range all {
+		for _, project := range budget.Projects {
+			if project == want {
+				out = append(out, budget)
+				break
+			}
+		}
+	}
+	return out
+}
+
+func compatibleBudgets(candidates []ExistingBudget, project ProjectInventory, policy ReviewedPolicy) []ExistingBudget {
+	wantMoney := MoneyFromFloat(project.CurrencyCode, project.MonthlyAmount)
+	wantProject := "projects/" + project.ProjectNumber
+	var compatible []ExistingBudget
+	for _, budget := range candidates {
+		period := budget.CalendarPeriod
+		if period == "" {
+			period = "MONTH"
+		}
+		credits := budget.CreditTypesTreatment
+		if credits == "" || credits == "CREDIT_TYPES_TREATMENT_UNSPECIFIED" {
+			credits = "INCLUDE_ALL_CREDITS"
+		}
+		if budget.DisplayName != project.CanonicalDisplayName || budget.OwnershipScope != "BILLING_ACCOUNT" || !budget.FilterCompatible || !budget.NotificationCompatible || len(budget.Projects) != 1 || budget.Projects[0] != wantProject || period != "MONTH" || !budget.Amount.Equal(wantMoney) || credits != "INCLUDE_ALL_CREDITS" || budget.PubSubTopic != policy.RequiredPubSubTopic || !exactThresholds(budget.Thresholds) {
+			continue
+		}
+		compatible = append(compatible, budget)
+	}
+	return compatible
+}
+
+func exactThresholds(thresholds []Threshold) bool {
+	if len(thresholds) != 3 {
+		return false
+	}
+	want := map[float64]bool{0.5: true, 0.8: true, 1.0: true}
+	for _, threshold := range thresholds {
+		basis := threshold.SpendBasis
+		if basis == "" || basis == "BASIS_UNSPECIFIED" {
+			basis = "CURRENT_SPEND"
+		}
+		if basis != "CURRENT_SPEND" || !want[threshold.Percent] {
+			return false
+		}
+		delete(want, threshold.Percent)
+	}
+	return len(want) == 0
+}

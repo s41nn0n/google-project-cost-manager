@@ -1,0 +1,52 @@
+name: Refresh organization inventory
+
+on:
+  schedule:
+    - cron: '17 4 * * *'
+  workflow_dispatch:
+  pull_request:
+    paths: ['policy/**', 'generated/**', '.github/workflows/discovery.yml']
+
+permissions:
+  contents: write
+  pull-requests: write
+  id-token: write
+
+jobs:
+  discover:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: s41nn0n/google-project-cost-manager
+          ref: ${{ vars.FRAMEWORK_COMMIT }} # immutable full release commit SHA
+          path: framework
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.12'
+          cache-dependency-path: framework/go.sum
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_PLAN_SERVICE_ACCOUNT }}
+      - name: Preserve reviewed output
+        run: cp -a generated /tmp/generated-committed
+      - name: Generate twice and require deterministic output
+        run: |
+          go run ./framework/cmd/discover -organization 'organizations/${{ vars.GCP_ORGANIZATION_ID }}' -policy policy/reviewed.yaml -output generated
+          cp -a generated /tmp/generated-first
+          go run ./framework/cmd/discover -organization 'organizations/${{ vars.GCP_ORGANIZATION_ID }}' -policy policy/reviewed.yaml -output generated
+          diff -ru /tmp/generated-first generated
+      - name: Require pull request inventory to be current
+        if: github.event_name == 'pull_request'
+        run: diff -ru /tmp/generated-committed generated
+      - uses: peter-evans/create-pull-request@v7
+        if: github.event_name != 'pull_request'
+        with:
+          branch: automation/organization-inventory
+          delete-branch: true
+          title: 'chore: refresh organization FinOps inventory'
+          commit-message: 'chore: refresh organization FinOps inventory'
+          body: 'Automated read-only discovery update. Resolve every blocking diagnostic before merge.'

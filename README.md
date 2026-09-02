@@ -1,81 +1,58 @@
-# GCP Project Cost Manager / Billing Guard
+# Organization-Wide Google Cloud Billing Guard
 
-[![CI](https://github.com/s41nn0n/google-project-cost-manager/actions/workflows/ci.yml/badge.svg)](https://github.com/s41nn0n/google-project-cost-manager/actions/workflows/ci.yml)
+A reusable Terraform and Go FinOps framework for discovering every project and billing account in one Google Cloud organization, managing one canonical guard budget per eligible project, and optionally unlinking billing when actual monthly spend reaches 80%.
 
-Open-source Go Cloud Run service that receives Cloud Billing Budget Pub/Sub alerts and can dry-run or disable billing on configured projects.
+This public repository contains no organization IDs, project IDs, billing-account IDs, amounts, exceptions, imports, or Terraform backend configuration. Keep all of those in a separate private deployment repository and consume this repository at an immutable release commit. Disabling billing can terminate services and cause unrecoverable resource loss; 80% is a delayed safety signal, not a guaranteed hard cap.
 
-GCP Cloud Billing Budgets are the source of truth for budget existence, scope, thresholds, and Pub/Sub wiring. App config is enforcement policy only and does not create, update, or delete budgets.
+## Components
 
-## Endpoints
+- `cmd/discover`: read-only Cloud Asset Inventory, Cloud Billing, and Billing Budgets scanner.
+- `deployments/terraform/modules/bootstrap`: locked/versioned GCS state, read/apply identities, and repository-restricted GitHub WIF.
+- `deployments/terraform/modules/control-plane`: isolated event/admin Cloud Run services, Pub/Sub/DLQ, Firestore state, Secret Manager, Scheduler, monitoring, and service accounts.
+- `deployments/terraform/modules/billing-account`: canonical single-project monthly budgets, enforcement IAM, coverage, and generated runtime policy.
+- `cmd/server`: hardened event receiver and administrative reconciler/self-test process.
 
-- `GET /healthz` liveness
-- `GET /readyz` loads and validates config
-- `POST /pubsub/billing-alert` Pub/Sub push target for budget alerts
-- `POST /reconcile` read-only/diff-only comparison of GCP Billing Budgets to enforcement config
-- `POST /self-test` JSON `{ "mode": "dry_run|billing_read_check|billing_toggle|setup_validation" }`
+Terraform 1.12 or newer is required. The public modules constrain the Google provider to tested major version 7; the root example commits its generated lock file. Production consumers should pin this repository by release commit and deploy the image by digest.
 
-## Configuration
+## Discovery
 
-Set `CONFIG_BACKEND=file|secretmanager`. File mode uses `CONFIG_PATH` (default `configs/example.yaml`). Secret Manager mode uses `CONFIG_SECRET_NAME` and optional `CONFIG_SECRET_VERSION` with Application Default Credentials; do not use service account keys. If using Terraform, note that `config_yaml` is stored in Terraform state even when marked sensitive; for stricter handling, create/update the Secret Manager secret out-of-band and pass its id as `existing_config_secret_id`.
+Authenticate as a read-only identity with organization Cloud Asset search, billing-account list, project billing-info read, project metadata read, and budget list/get permissions. Then run:
 
-Budgets may map to one project or many projects. Matching uses `budgetDisplayName`, `displayName`, `name`, or `resourceName` from the alert. Defaults are threshold `0.8`, dry-run `true`, action `disable_billing`, and unknown alerts are dry-run. Unknown/unconfigured alerts can be configured with `unknownAlertPolicy: ignore|dry_run|disable_billing`; only explicitly listed `unknownAlertProjects` can be acted on.
-
-Enable read-only reconciliation with:
-
-```yaml
-reconcile:
-  enabled: true
-  sourceOfTruth: gcp_budgets
-  mode: diff_only
-  billingAccountNames:
-    - billingAccounts/000000-000000-000000
-  requiredPubSubTopic: projects/CORE_PROJECT/topics/billing-budget-alerts
+```sh
+go run ./cmd/discover \
+  -organization organizations/123456789 \
+  -policy private/policy/reviewed.yaml \
+  -output private/generated
 ```
 
-`POST /reconcile` never mutates GCP. Prefer `reconcile.billingAccountNames` for one or more accounts; `reconcile.billingAccountName` remains supported as a legacy single-account shorthand. Error severity diffs indicate critical setup problems, such as configured budgets missing in GCP or Pub/Sub topic mismatch. Warning diffs indicate drift to review.
+Outputs are deterministic and contain no timestamps:
 
-## IAM and endpoint security
+- `inventory.yaml`: normalized accounts, project numbers/states, billing links, classifications, and budget observations.
+- `coverage.json`: counts and the complete/incomplete rollout gate.
+- `imports.json` and `imports.tf`: exact zero-change Terraform adoption candidates.
+- `terraform.auto.tfvars.json`: module input derived from reviewed policy and inventory.
+- `diagnostics.json`: machine-readable visibility, amount, and ambiguity failures.
 
-Deploy Cloud Run as a private service; do **not** grant `allUsers`/unauthenticated invoker. The Terraform example grants `roles/run.invoker` only to dedicated Pub/Sub and Cloud Scheduler service accounts, which send OIDC-authenticated requests. Runtime service account needs Secret Manager access for config, Cloud Billing API permissions to read/update project billing for enforcement, Billing Budgets read/list access on the billing account for reconciliation, and project metadata read access for project number to ID resolution. Enable Cloud Billing, Billing Budgets, and Cloud Resource Manager APIs.
+The command exits nonzero for incomplete visibility, inaccessible accounts, missing defaults affecting active projects, or ambiguous exact matches. Existing non-matching budgets are left alone; the module creates `billing-guard-<project-id>` alongside them after review.
 
-## Self-test
+## Runtime safety contract
 
-`setup_validation` runs read-only reconciliation and fails when error severity diffs are found; warnings are reported but do not fail the mode.
+Schema version 2 policy is generated by Terraform. Live enforcement requires the canonical budget resource name, billing account, project ID/number, a single-project scope, persistent Firestore state, `unknownAlertPolicy: ignore`, and `maxProjectsDisabledPerEvent: 1`. Display-name matching remains available only to legacy schema-1 deployments.
 
-`billing_toggle` is guarded by explicit `selfTest.testProjectId`, not protected, optional `allowedProjectIdPattern`, best-effort `minimumIntervalHours`, and required restore billing account. Prefer `selfTest.restoreBillingAccountNameSecret` pointing to a Secret Manager secret whose value is `billingAccounts/...`; `billingAccountName` is available for local/non-sensitive testing. The test disables billing, confirms disabled, restores billing, and confirms final state `billing_enabled`.
+The receiver rejects unknown, malformed, stale-period, forecast-only, protected, and multi-project alerts. Before unlinking it reads the current billing link and transactionally claims the event to suppress duplicate/out-of-order work. An already-unlinked project is success. It never restores billing.
+
+The Terraform control plane deploys separate Cloud Run services from the same image using `ROUTE_MODE=receiver|admin`; the Pub/Sub identity cannot invoke reconciliation or self-test routes. Failed deliveries go to a DLQ and monitoring watches both structured safety failures and queued dead letters.
 
 ## Development
-
-CI runs Go, Docker, and Terraform validation without GCP credentials. Run the same checks locally before opening a pull request:
 
 ```sh
 test -z "$(gofmt -l .)"
 go test ./...
 go vet ./...
-docker build -t billing-guard:ci .
 terraform -chdir=deployments/terraform fmt -check -recursive
 terraform -chdir=deployments/terraform init -backend=false -input=false
 terraform -chdir=deployments/terraform validate
+docker build -t billing-guard:ci .
 ```
 
-See `deployments/terraform` for an example Cloud Run deployment. It enables required project APIs and creates the Pub/Sub push path; `billing_account_id` only creates an optional sample/bootstrap Cloud Billing Budget wired to the Pub/Sub topic.
-
-## Releases
-
-Releases are managed by Release Please from Conventional Commits on `main`:
-
-- `feat: ...` creates a feature entry and normally a minor version bump.
-- `fix: ...` creates a bug-fix entry and normally a patch version bump.
-- `docs:` and `chore:` commits are included in the generated `CHANGELOG.md` when part of a release.
-- Breaking changes should use `!` in the commit type, such as `feat!: ...`, or a `BREAKING CHANGE:` footer.
-
-Release Please opens or updates a release PR. When that PR is merged, it creates the GitHub tag, GitHub release, and changelog update. The repository starts from `.release-please-manifest.json` version `0.0.0`, so maintainers should review the first release PR carefully because there are no existing tags.
-
-This repository does not currently publish Docker images as part of the release workflow. Build and publish your own image for deployment, then pass that image reference to Terraform.
-
-## Design decisions
-
-- [Using this repo in your Google project](docs/using-in-your-google-project.md)
-- [Reconciliation and setup validation](docs/reconciliation.md)
-- [AI Task Manager operating guide](docs/ai-task-manager.md)
-- [ADR 0001: GCP Billing Budgets are the source of truth](docs/adr/0001-billing-budgets-source-of-truth.md)
+See [the deployment guide](docs/using-in-your-google-project.md), [reconciliation guide](docs/reconciliation.md), and [ADR 0001](docs/adr/0001-billing-budgets-source-of-truth.md).

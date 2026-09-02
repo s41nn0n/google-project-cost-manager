@@ -2,7 +2,9 @@
 .github
 .pi
 .terraform
+**/.terraform
 .terraform.lock.hcl
+**/.terraform.lock.hcl
 terraform.tfstate*
 .env
 *.log

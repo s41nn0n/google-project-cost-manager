@@ -1,50 +1,24 @@
-# ADR 0001: Use GCP Billing Budgets as the Source of Truth
+# ADR 0001: Terraform Owns Canonical Guard Budgets
 
 ## Status
 
-Accepted
+Accepted, superseding the earlier decision that treated all GCP budgets as externally owned.
 
 ## Context
 
-The service receives Cloud Billing Budget Pub/Sub alerts and uses local configuration to decide whether to disable billing on one or more projects.
-
-Initially, we considered managing Billing Budgets directly from this application or from Terraform. That works when budgets and project scopes are static, but in the intended environment budgets and projects may change over time. Budgets may be created, deleted, renamed, or have project filters updated by finance/platform teams outside this application.
-
-If this repo tried to own all budgets as the source of truth, it could drift from the actual Billing Budget setup or overwrite changes made elsewhere.
+Organization-wide enforcement needs a deterministic one-to-one binding among a project, billing account, amount, Pub/Sub topic, actual-spend threshold, and runtime policy. Display names and arbitrary externally edited budgets do not provide a safe enforcement identity. At the same time, finance and application teams may already own budgets that this framework must not overwrite.
 
 ## Decision
 
-GCP Cloud Billing Budgets are the source of truth for budget existence, project scope, thresholds, and Pub/Sub alert wiring.
+Terraform owns exactly one canonical guard budget for each `managed` active billed project. Its default display name is `billing-guard-<project-id>` and its generated resource name is the live enforcement identity. Terraform does not own unrelated budgets.
 
-This repo's configuration is the source of truth for enforcement policy only:
+An existing budget is eligible for adoption only when account, canonical display name, single-project scope, monthly period, specified amount/currency, credit treatment, Pub/Sub topic, and the 50/80/100 current-spend rules match exactly. Generated import blocks must plan with zero remote changes. No candidate creates a new canonical budget; multiple candidates block rollout.
 
-- dry-run vs enforcement
-- protected projects
-- threshold used for enforcement decisions
-- per-budget/per-project action overrides
-- unknown alert behavior
-- self-test settings
-- safety limits
-
-The application should not mutate Billing Budgets by default.
+Managed budget resources use both Terraform `prevent_destroy` and provider `deletion_policy = "ABANDON"`. The apply identity must be granted create/get/list/update but not budget delete permission. Removing a budget from configuration therefore cannot delete the remote guard budget.
 
 ## Consequences
 
-### Positive
-
-- Existing operational ownership of Billing Budgets is preserved.
-- Finance/platform teams can update budgets without needing to update Terraform in this repo first.
-- The app can detect and report drift instead of silently assuming config and GCP match.
-- Safer open-source default: no automated budget rewrites.
-
-### Negative
-
-- The app needs read access to Billing Budgets for reconciliation/diff checks.
-- The app may receive alerts for budgets that are not configured for enforcement.
-- Config must still be maintained for enforcement policy.
-
-## Follow-up design
-
-Add a reconciliation/diff feature that compares configured enforcement policy to current GCP Billing Budgets and reports differences.
-
-The default mode should be read-only.
+- Live alerts can be matched by billing-account and budget resource IDs rather than display name.
+- Existing unrelated budgets remain untouched and visible in inventory.
+- New projects produce a narrow reviewed change: one budget, billing-control IAM, and generated policy.
+- Adoption is intentionally strict; operators resolve any planned drift before import.

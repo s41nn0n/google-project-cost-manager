@@ -13,7 +13,7 @@ func main() {
 	if port == "" {
 		port = "8080"
 	}
-	s, err := app.NewServer(app.Options{})
+	s, err := app.NewServer(app.Options{RouteMode: os.Getenv("ROUTE_MODE")})
 	if err != nil {
 		log.Fatalf("server init: %v", err)
 	}

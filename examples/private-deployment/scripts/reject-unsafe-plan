@@ -1,0 +1,33 @@
+#!/usr/bin/env sh
+set -eu
+
+plan_json=${1:?usage: reject-unsafe-plan PLAN_JSON}
+
+jq -e '
+  [.resource_changes[]? | select(.change.importing != null) | select(.change.actions != ["no-op"])]
+  | length == 0
+' "$plan_json" >/dev/null || {
+  echo "unsafe import: adoption must produce zero remote changes" >&2
+  exit 1
+}
+
+jq -e '
+  [
+    .resource_changes[]?
+    | select(
+        (.change.actions | index("delete")) or
+        ((.change.actions | index("create")) and (.change.actions | index("delete")))
+      )
+  ] | length == 0
+' "$plan_json" >/dev/null || {
+  echo "unsafe plan: destroys or replacements are forbidden" >&2
+  exit 1
+}
+
+jq -e '
+  [.resource_changes[]? | select(.type | test("iam")) | select(.address | test("billing|finops|runtime_billing"; "i") | not)]
+  | length == 0
+' "$plan_json" >/dev/null || {
+  echo "unsafe plan: unrelated IAM change" >&2
+  exit 1
+}

@@ -3,68 +3,56 @@ name: CI
 on:
   pull_request:
   push:
-    branches:
-      - main
+    branches: [main]
 
 permissions:
   contents: read
 
 jobs:
   go:
-    name: Go
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           persist-credentials: false
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
+      - uses: actions/setup-go@v5
         with:
           go-version: '1.23.12'
           cache: true
-
       - name: Check formatting
         run: test -z "$(gofmt -l .)"
-
       - name: Test
         run: go test ./...
-
       - name: Vet
         run: go vet ./...
 
   docker:
-    name: Docker
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           persist-credentials: false
-
       - name: Build image
         run: docker build -t billing-guard:ci .
 
   terraform:
-    name: Terraform
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           persist-credentials: false
-
-      - name: Set up Terraform
-        uses: hashicorp/setup-terraform@v3
+      - uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: '1.10.5'
-
+          terraform_version: '1.12.2'
       - name: Check formatting
         run: terraform -chdir=deployments/terraform fmt -check -recursive
-
-      - name: Initialize without backend
-        run: terraform -chdir=deployments/terraform init -backend=false -input=false
-
-      - name: Validate
-        run: terraform -chdir=deployments/terraform validate
+      - name: Validate root composition
+        run: |
+          terraform -chdir=deployments/terraform init -backend=false -input=false
+          terraform -chdir=deployments/terraform validate
+      - name: Validate standalone modules
+        run: |
+          for module in bootstrap control-plane billing-account; do
+            terraform -chdir="deployments/terraform/modules/$module" init -backend=false -input=false
+            terraform -chdir="deployments/terraform/modules/$module" validate
+          done

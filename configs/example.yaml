@@ -1,52 +1,39 @@
+schemaVersion: 2
+organizationId: "123456789012"
+controlProjectId: example-finops-control
 defaults:
   threshold: 0.8
   dryRun: true
   action: disable_billing
-# Unknown/unconfigured budget alerts follow this policy. Keep dry_run unless you
-# explicitly list fallback projects below and understand the blast radius.
-unknownAlertPolicy: dry_run # dry_run | ignore | disable_billing
+unknownAlertPolicy: ignore
 unknownAlertProjects: []
 maxProjectsDisabledPerEvent: 1
 protectedProjects:
-  - prod-shared-services
-# GCP Billing Budgets are the source of truth for budget existence, scope,
-# thresholds, and Pub/Sub notification wiring. This block enables read-only
-# diff validation against those GCP budgets.
+  - example-finops-control
+eventState:
+  backend: firestore
+  projectId: example-finops-control
+  databaseId: billing-guard-events
+  collection: budget-events
 reconcile:
   enabled: true
-  sourceOfTruth: gcp_budgets
+  sourceOfTruth: terraform
   mode: diff_only
   billingAccountNames:
     - billingAccounts/000000-000000-000000
-  # Legacy single-account shorthand; billingAccountNames is preferred.
-  # billingAccountName: billingAccounts/000000-000000-000000
-  requiredPubSubTopic: projects/YOUR_CORE_PROJECT/topics/billing-budget-alerts
-# Budget entries below are enforcement policy only. They do not create, update,
-# or delete GCP Billing Budgets.
+  requiredPubSubTopic: projects/example-finops-control/topics/billing-budget-alerts
 budgets:
-  - names:
-      - Team A Budget
-      - billingAccounts/000000-000000-000000/budgets/11111111-1111-1111-1111-111111111111
-    projects:
-      - team-a-dev
-      - team-a-staging
-    threshold: 0.9
-    dryRun: true
-  - names: [single-project-budget]
-    projects: [sandbox-project]
-projects:
-  sandbox-project:
-    # Example remains safe by default. Set this to false only after validating
-    # dry-run logs and confirming you want real enforcement for this project.
-    dryRun: true
+  - budgetResourceName: billingAccounts/000000-000000-000000/budgets/11111111-1111-1111-1111-111111111111
+    billingAccountName: billingAccounts/000000-000000-000000
+    projectId: example-sandbox
+    projectNumber: "123456789012"
+    enforcementMode: dry_run
+    names: []
+    projects: [example-sandbox]
+    threshold: 0.8
 selfTest:
   enabled: true
-  mode: dry_run # dry_run | billing_read_check | billing_toggle | setup_validation
-  testProjectId: billing-guard-test
-  # For billing_toggle, prefer restoreBillingAccountNameSecret. The secret value
-  # should be the resource name, e.g. billingAccounts/000000-000000-000000.
-  restoreBillingAccountNameSecret: projects/YOUR_CORE_PROJECT/secrets/billing-guard-test-billing-account
-  # billingAccountName may be used instead for non-sensitive local testing.
-  # billingAccountName: billingAccounts/000000-000000-000000
-  allowedProjectIdPattern: ^billing-guard-test$
+  mode: dry_run
+  testProjectId: example-billing-guard-test
+  allowedProjectIdPattern: ^example-billing-guard-test$
   minimumIntervalHours: 24

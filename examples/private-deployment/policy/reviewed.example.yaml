@@ -1,0 +1,12 @@
+controlProjectId: replace-control-project
+requiredPubSubTopic: projects/replace-control-project/topics/billing-budget-alerts
+enforcementMode: dry_run
+enforcementThreshold: 0.8
+billingAccounts:
+  billingAccounts/000000-000000-000000:
+    defaultMonthlyAmount: 1000
+    currencyCode: USD
+    projectOverrides:
+      replace-sandbox-project: 150
+protectedProjects:
+  replace-shared-project: Shared platform project approved by the FinOps owner

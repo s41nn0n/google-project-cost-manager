@@ -18,6 +18,10 @@ const (
 )
 
 type Config struct {
+	SchemaVersion               int                      `yaml:"schemaVersion" json:"schemaVersion"`
+	OrganizationID              string                   `yaml:"organizationId" json:"organizationId"`
+	ControlProjectID            string                   `yaml:"controlProjectId" json:"controlProjectId"`
+	EventState                  EventStateConfig         `yaml:"eventState" json:"eventState"`
 	Defaults                    Defaults                 `yaml:"defaults" json:"defaults"`
 	Budgets                     []Budget                 `yaml:"budgets" json:"budgets"`
 	Projects                    map[string]ProjectPolicy `yaml:"projects" json:"projects"`
@@ -27,6 +31,13 @@ type Config struct {
 	UnknownAlertProjects        []string                 `yaml:"unknownAlertProjects" json:"unknownAlertProjects"`
 	SelfTest                    SelfTestConfig           `yaml:"selfTest" json:"selfTest"`
 	Reconcile                   ReconcileConfig          `yaml:"reconcile" json:"reconcile"`
+}
+
+type EventStateConfig struct {
+	Backend    string `yaml:"backend" json:"backend"`
+	ProjectID  string `yaml:"projectId" json:"projectId"`
+	DatabaseID string `yaml:"databaseId" json:"databaseId"`
+	Collection string `yaml:"collection" json:"collection"`
 }
 
 type ReconcileConfig struct {
@@ -45,11 +56,16 @@ type Defaults struct {
 }
 
 type Budget struct {
-	Names     []string `yaml:"names" json:"names"`
-	Projects  []string `yaml:"projects" json:"projects"`
-	Threshold float64  `yaml:"threshold" json:"threshold"`
-	DryRun    *bool    `yaml:"dryRun" json:"dryRun"`
-	Action    string   `yaml:"action" json:"action"`
+	BudgetResourceName string   `yaml:"budgetResourceName" json:"budgetResourceName"`
+	BillingAccountName string   `yaml:"billingAccountName" json:"billingAccountName"`
+	ProjectID          string   `yaml:"projectId" json:"projectId"`
+	ProjectNumber      string   `yaml:"projectNumber" json:"projectNumber"`
+	EnforcementMode    string   `yaml:"enforcementMode" json:"enforcementMode"`
+	Names              []string `yaml:"names" json:"names"`
+	Projects           []string `yaml:"projects" json:"projects"`
+	Threshold          float64  `yaml:"threshold" json:"threshold"`
+	DryRun             *bool    `yaml:"dryRun" json:"dryRun"`
+	Action             string   `yaml:"action" json:"action"`
 }
 
 type ProjectPolicy struct {
@@ -150,6 +166,17 @@ func (c *Config) ApplyDefaults() {
 	if c.UnknownAlertPolicy == "" {
 		c.UnknownAlertPolicy = "dry_run"
 	}
+	if c.SchemaVersion >= 2 {
+		if c.UnknownAlertPolicy == "dry_run" {
+			c.UnknownAlertPolicy = "ignore"
+		}
+		if c.MaxProjectsDisabledPerEvent == 0 {
+			c.MaxProjectsDisabledPerEvent = 1
+		}
+		if c.EventState.Collection == "" {
+			c.EventState.Collection = "budget-events"
+		}
+	}
 	if c.Projects == nil {
 		c.Projects = map[string]ProjectPolicy{}
 	}
@@ -171,10 +198,44 @@ func (c *Config) Validate() error {
 	if !validUnknownAlertPolicy(c.UnknownAlertPolicy) {
 		return fmt.Errorf("unknownAlertPolicy must be one of dry_run, ignore, disable_billing")
 	}
+	if c.SchemaVersion >= 2 && c.MaxProjectsDisabledPerEvent != 1 {
+		return errors.New("schemaVersion 2 requires maxProjectsDisabledPerEvent: 1")
+	}
+	if c.SchemaVersion >= 2 && c.UnknownAlertPolicy != "ignore" {
+		return errors.New("schemaVersion 2 requires unknownAlertPolicy: ignore")
+	}
+	if c.SchemaVersion >= 2 && c.ControlProjectID == "" {
+		return errors.New("schemaVersion 2 requires controlProjectId")
+	}
+	if c.SchemaVersion >= 2 {
+		protected := false
+		for _, p := range c.ProtectedProjects {
+			if p == c.ControlProjectID {
+				protected = true
+			}
+		}
+		if !protected {
+			return errors.New("control project must be protected")
+		}
+	}
 	if c.MaxProjectsDisabledPerEvent < 0 {
 		return errors.New("maxProjectsDisabledPerEvent cannot be negative")
 	}
 	for _, b := range c.Budgets {
+		if c.SchemaVersion >= 2 {
+			if b.EnforcementMode != "dry_run" && b.EnforcementMode != "live" {
+				return errors.New("budget.enforcementMode must be dry_run or live")
+			}
+			if b.BudgetResourceName == "" || b.BillingAccountName == "" || b.ProjectID == "" || b.ProjectNumber == "" {
+				return errors.New("schemaVersion 2 budgets require canonical budget, billing account, project ID, and project number")
+			}
+			if len(b.Projects) != 1 || b.Projects[0] != b.ProjectID {
+				return errors.New("schemaVersion 2 budgets must cover exactly their canonical project")
+			}
+			if b.EnforcementMode == "live" && (c.EventState.Backend != "firestore" || c.EventState.ProjectID == "" || c.EventState.DatabaseID == "") {
+				return errors.New("live enforcement requires persistent Firestore eventState")
+			}
+		}
 		if b.Threshold < 0 || b.Threshold > 1 {
 			return errors.New("budget.threshold must be between 0 and 1")
 		}
@@ -187,8 +248,8 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("project.action must be one of disable_billing, dry_run, ignore")
 		}
 	}
-	if c.Reconcile.SourceOfTruth != "gcp_budgets" {
-		return fmt.Errorf("reconcile.sourceOfTruth must be gcp_budgets")
+	if c.Reconcile.SourceOfTruth != "gcp_budgets" && c.Reconcile.SourceOfTruth != "terraform" {
+		return fmt.Errorf("reconcile.sourceOfTruth must be gcp_budgets or terraform")
 	}
 	if c.Reconcile.Mode != "diff_only" {
 		return fmt.Errorf("reconcile.mode must be diff_only")
