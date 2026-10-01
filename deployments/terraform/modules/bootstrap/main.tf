@@ -47,8 +47,8 @@ resource "google_iam_workload_identity_pool" "github" {
   project                   = var.control_project_id
   workload_identity_pool_id = var.workload_identity_pool_id
   # WIF pool and provider display names have a 32-character API limit.
-  display_name              = "Billing Guard GitHub pool"
-  depends_on                = [google_project_service.bootstrap]
+  display_name = "Billing Guard GitHub pool"
+  depends_on   = [google_project_service.bootstrap]
 }
 
 resource "google_iam_workload_identity_pool_provider" "github" {
