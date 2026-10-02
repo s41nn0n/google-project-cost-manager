@@ -14,7 +14,7 @@ This public repository contains no organization IDs, project IDs, billing-accoun
 - `cmd/server`: hardened event receiver and administrative reconciler/self-test process.
 - `cmd/plancheck`, `cmd/readiness`, `cmd/verify-rollout`, `cmd/enforcement`: scoped plan checks, persisted readiness verification, explicit disposable testing, and independent operator enable/stop.
 
-Terraform 1.12 or newer is required. The public modules constrain the Google provider to tested major version 7; the root example commits its generated lock file. Production consumers should pin this repository by release commit and deploy the image by digest.
+Terraform 1.12 or newer is required. The public modules require Google provider 8.5.0 or newer within major version 8; all committed lock files use the tested 8.5.0 release. Production consumers should pin this repository by release commit and deploy the image by digest.
 
 ## Discovery
 

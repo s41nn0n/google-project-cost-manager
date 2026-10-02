@@ -10,7 +10,13 @@ decisions belong in the private repository.
 - Local Firestore emulator: claim recovery/fencing, duplicate delivery, distinct
   daily evidence, sticky failures, and independent persistent operator stop.
 - Terraform root and bootstrap/control/billing/IAM modules validate without GCP
-  credentials. Google provider major 7; tested locks 7.46.0 and 7.46.1.
+  credentials. Google provider major 8; all tested locks use 8.5.0.
+- Six credential-free Terraform budget contract tests cover canonical scope,
+  amount/currency precision, current-spend thresholds, dry-run defaults, retained
+  unbilled budgets, and rejection of blocked or invalid policy inputs.
+- Terraform 1.12.2 and 1.15.9 both pass the module tests and validate the roots.
+- An offline real-provider 8.5.0 create plan passes the scoped plan checker.
+  Its captured plan fixture tests 15 valid/invalid period and selector cases.
 - Private roots validate in isolated scratch copies against these local modules;
   no backend state or live credentials were used for those validations.
 - Public/private workflow lint and shell parsing checks.
@@ -19,6 +25,31 @@ decisions belong in the private repository.
   Go server binary, with no ignore-unfixed setting.
 - Binary govulncheck requires the narrowly reviewed exception below; all other
   vulnerable symbol findings fail. The exception parser has regression tests.
+
+## Google provider 8 upgrade
+
+All public modules and private deployment roots require Google provider
+`>= 8.5.0, < 9.0.0`, with generated 8.5.0 lock files. The existing security
+controls remain in place; this upgrade does not broaden deployment authority.
+The [official version 8 upgrade guide](https://registry.terraform.io/providers/hashicorp/google/8.5.0/docs/guides/version_8_upgrade)
+was checked against the resources this framework manages. Its Secret Manager
+write-only argument change does not affect our use of `secret_data`.
+
+The real provider suppresses explicit `MONTH` against an absent period and
+leaves empty optional-computed labels unknown on creation. The checker accepts
+the API's [documented monthly default](https://docs.cloud.google.com/billing/docs/reference/budget/rest/v1/billingAccounts.budgets#Filter)
+only when the period/custom-period fields are known. Unknown creation labels
+require proof of the exact constant-empty configuration in the saved plan;
+unknown update/import labels and other selectors remain rejected. The module
+also sets services explicitly empty. Mock tests alone do not exercise these
+provider planning behaviors, so the real-plan fixture is retained as a regression.
+
+Do not apply a saved provider-7 plan after upgrading. Publish the pinned framework,
+run `terraform init -upgrade`, create a fresh plan against the existing state,
+and review it before applying. No live state migration or GCP apply was performed
+during this upgrade. Unexpected infrastructure deletes or replacements must
+stop the rollout; the documented bootstrap removal of legacy IAM grants is
+intentional and remains an administrator-reviewed step.
 
 ## Version-bound binary scan exception
 

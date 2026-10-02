@@ -10,6 +10,19 @@ import (
 
 type Plan struct {
 	ResourceChanges []ResourceChange `json:"resource_changes"`
+	Configuration   struct {
+		RootModule struct {
+			ModuleCalls map[string]struct {
+				Module struct {
+					Resources []struct {
+						Address     string         `json:"address"`
+						Type        string         `json:"type"`
+						Expressions map[string]any `json:"expressions"`
+					} `json:"resources"`
+				} `json:"module"`
+			} `json:"module_calls"`
+		} `json:"root_module"`
+	} `json:"configuration"`
 }
 
 type ResourceChange struct {
@@ -159,8 +172,15 @@ func Validate(plan Plan, s Scope) error {
 					return fmt.Errorf("budget scope is unknown")
 				}
 				projects, ok := filter["projects"].([]any)
-				if !ok || len(projects) != 1 || projects[0] != "projects/"+number || filter["calendar_period"] != "MONTH" || filter["credit_types_treatment"] != "INCLUDE_ALL_CREDITS" {
+				// The provider suppresses MONTH against an unset period on create.
+				// The API defaults an absent usage period to MONTH. Unknown periods
+				// and any custom period still fail the checks below.
+				period := filter["calendar_period"]
+				if !ok || len(projects) != 1 || projects[0] != "projects/"+number || (period != nil && period != "" && period != "MONTH") || filter["credit_types_treatment"] != "INCLUDE_ALL_CREDITS" {
 					return fmt.Errorf("unexpected budget filter")
+				}
+				if err := validateBudgetFilterUnknowns(plan, r); err != nil {
+					return err
 				}
 				for _, key := range []string{"services", "labels", "subaccounts", "credit_types", "resource_ancestors", "custom_period"} {
 					switch v := filter[key].(type) {
@@ -238,6 +258,73 @@ func singleton(v any) (map[string]any, bool) {
 	}
 	item, ok := items[0].(map[string]any)
 	return item, ok
+}
+
+func hasUnknown(value any) bool {
+	switch v := value.(type) {
+	case nil:
+		return false
+	case bool:
+		return v
+	case []any:
+		for _, item := range v {
+			if hasUnknown(item) {
+				return true
+			}
+		}
+		return false
+	case map[string]any:
+		for _, item := range v {
+			if hasUnknown(item) {
+				return true
+			}
+		}
+		return false
+	default:
+		return true
+	}
+}
+
+func validateBudgetFilterUnknowns(plan Plan, resource ResourceChange) error {
+	unknown := resource.Change.AfterUnknown["budget_filter"]
+	if !hasUnknown(unknown) {
+		return nil
+	}
+	filter, ok := singleton(unknown)
+	if !ok {
+		return fmt.Errorf("unknown budget filter")
+	}
+	for key, value := range filter {
+		if !hasUnknown(value) {
+			continue
+		}
+		// Optional-computed maps are unknown on create even with labels = {}.
+		// Permit only that exact provider behavior, proved by constant config;
+		// never allow unknown selectors on updates/imports or dynamic labels.
+		if key != "labels" || value != true || len(resource.Change.Actions) != 1 || resource.Change.Actions[0] != "create" || !hasConstantEmptyBudgetLabels(plan) {
+			return fmt.Errorf("unknown budget selector %s", key)
+		}
+	}
+	return nil
+}
+
+func hasConstantEmptyBudgetLabels(plan Plan) bool {
+	for _, resource := range plan.Configuration.RootModule.ModuleCalls["billing_account"].Module.Resources {
+		if resource.Address != "google_billing_budget.project" || resource.Type != "google_billing_budget" {
+			continue
+		}
+		filter, ok := singleton(resource.Expressions["budget_filter"])
+		if !ok {
+			return false
+		}
+		expression, ok := filter["labels"].(map[string]any)
+		if !ok || len(expression) != 1 {
+			return false
+		}
+		labels, ok := expression["constant_value"].(map[string]any)
+		return ok && len(labels) == 0
+	}
+	return false
 }
 
 func validateControl(r ResourceChange, s Scope) error {

@@ -23,6 +23,10 @@ resource "google_billing_budget" "project" {
     projects               = ["projects/${each.value.project_number}"]
     calendar_period        = "MONTH"
     credit_types_treatment = "INCLUDE_ALL_CREDITS"
+    # Services become known in plans. The provider still marks empty labels
+    # unknown on create; the plan checker verifies this constant-empty config.
+    labels   = {}
+    services = []
   }
   amount {
     specified_amount {
