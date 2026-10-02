@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.0.1](https://github.com/s41nn0n/google-project-cost-manager/compare/v1.0.0...v1.0.1) (2026-10-02)
+
+
+### Bug Fixes
+
+* keep unused closed billing accounts inventory-only ([f5d0522](https://github.com/s41nn0n/google-project-cost-manager/commit/f5d0522f3b19e02051bf1ae02a4872841714e7e1))
+* publish verified artifacts before finalizing releases ([8069033](https://github.com/s41nn0n/google-project-cost-manager/commit/80690338fc1c8fc44244a7ac1890aadb2063889f))
+
 ## 1.0.0 (2026-10-02)
 
 
