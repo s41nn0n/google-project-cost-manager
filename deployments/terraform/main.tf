@@ -9,6 +9,7 @@ module "control_plane" {
   region                    = var.region
   image_digest              = var.image_digest
   existing_policy_secret_id = var.existing_policy_secret_id
+  notification_channels     = var.notification_channels
 }
 
 module "billing_account" {
@@ -28,6 +29,9 @@ module "billing_account" {
 locals {
   generated_policy = {
     schemaVersion               = 2
+    enforcementEnabled          = false
+    inventoryObservedAt         = var.inventory_observed_at
+    releaseId                   = var.image_digest
     organizationId              = var.organization_id
     controlProjectId            = var.control_project_id
     defaults                    = { threshold = 0.8, dryRun = var.enforcement_mode != "live", action = "disable_billing" }
@@ -56,6 +60,8 @@ locals {
           projectNumber      = budget.project_number
           enforcementMode    = budget.enforcement_mode
           threshold          = budget.threshold
+          monthlyAmount      = budget.monthly_amount
+          currencyCode       = budget.currency_code
           names              = []
           projects           = [budget.project_id]
         }

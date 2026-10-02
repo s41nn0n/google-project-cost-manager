@@ -6,7 +6,7 @@ Fork or reference this public framework from a private deployment repository. On
 
 ## Bootstrap once
 
-Run `modules/bootstrap` locally as an organization administrator. It creates a versioned, uniformly access-controlled GCS bucket with Terraform native state locking and deletion protection, read-only plan/discovery and reviewed-apply service accounts, and GitHub WIF restricted to one exact private `owner/repository`. Review the globally unique bucket name before apply.
+Run `modules/bootstrap` locally as an organization administrator. It creates a versioned, uniformly access-controlled GCS bucket with Terraform native locking and deletion protection, a read-only identity, a protected control-project writer, and one budget writer per account. WIF requires immutable repository/owner IDs, reviewed numeric actor IDs, main deployment events, and the exact trusted workflow. Use a separate workflow for manual PR review; never run PR code under an apply-capable main-dispatch token.
 
 Use independent GCS prefixes:
 
@@ -14,9 +14,10 @@ Use independent GCS prefixes:
 bootstrap
 control-plane
 billing-accounts/<billing-account-id>
+iam-onboarding
 ```
 
-Grant the plan identity only Cloud Asset organization search, billing-account list/get, project billing-info read, project metadata read, budget list/get, and state read. Grant the apply identity the exact control-plane, budget create/get/list/update, and billing-control IAM permissions needed by reviewed plans. Do not grant `billing.budgets.delete`; do not create service-account keys.
+Grant discovery/plan read access plus conditioned .tflock writes. Budget writers get only account-scoped budget create/get/list/update and their own state prefix, never IAM-policy writes, workload authority, or budget delete. Control administration stays in the protected project and its state. Runtime billing unlink is granted only on managed projects through an explicit administrator-owned `iam-onboarding` state, not through budget-writer CI. Never create GCP service-account keys. Review the residual authority of an identity that can change the runtime image/policy.
 
 ## Reviewed policy
 
@@ -34,7 +35,11 @@ Any active billed `blocked` project prevents rollout.
 
 ## State and apply ordering
 
-Apply separate billing-account states first, including reviewed imports, and require their plans to contain only expected budgets and FinOps IAM. Apply/update the control-plane policy secret last so it never references a budget that has not reached state. After merge, re-plan the exact commit against current state, save the binary plan, pass the protected GitHub environment approval, and apply that same plan with the write identity.
+Require complete fresh discovery and checked plans before any write. Initially create the dry-run control plane, then apply each billing account, then publish the combined policy secret only after every account succeeds. Runtime IAM onboarding is a separate explicit operator plan. Imports require a separate plan with at least one import and zero remote changes. After merge, re-plan the exact commit against current state and apply that checked saved plan using the corresponding scoped identity.
+
+Prefer independent approval/branch protection where available. A single-operator exception must be explicitly accepted and documented privately, monitored for access changes, and revisited before adding writers. Use default read workflow tokens, an isolated publisher with generated-only writes and no cloud identity, and a fail-closed access preflight.
+
+Initial policy is globally disabled/dry-run. Mutable readiness counters are deprecated and ignored. [Live readiness](reconciliation.md) requires seven actual consecutive successful days, fresh verified inventory, a recent observed disposable cycle, and an explicit independent persistent operator switch. Mandatory alert channels must reach a tested real recipient before production.
 
 ## Recovery and warnings
 

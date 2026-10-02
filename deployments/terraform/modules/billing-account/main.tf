@@ -4,6 +4,10 @@ locals {
     for id, project in var.projects : id => project
     if project.classification == "managed"
   }
+  owned = {
+    for id, project in var.projects : id => project
+    if project.classification == "managed" || (project.classification == "unbilled" && project.budget_resource_name != "")
+  }
   protected = {
     for id, project in var.projects : id => project.protected_reason
     if project.classification == "protected"
@@ -11,8 +15,7 @@ locals {
 }
 
 resource "google_billing_budget" "project" {
-  depends_on      = [terraform_data.rollout_gate]
-  for_each        = local.managed
+  for_each        = local.owned
   billing_account = local.account_id
   display_name    = each.value.budget_display_name != "" ? each.value.budget_display_name : "billing-guard-${each.key}"
   ownership_scope = "BILLING_ACCOUNT"
@@ -49,15 +52,12 @@ resource "google_billing_budget" "project" {
   lifecycle { prevent_destroy = true }
 }
 
-resource "google_project_iam_member" "runtime_billing_unlink" {
-  for_each = local.managed
-  project  = each.key
-  role     = "roles/billing.projectManager"
-  member   = "serviceAccount:${var.runtime_service_account_email}"
+# Runtime IAM belongs in a separate administrator-owned onboarding state.
+removed {
+  from = google_project_iam_member.runtime_billing_unlink
+  lifecycle { destroy = false }
 }
-
-resource "google_billing_account_iam_member" "runtime_budget_viewer" {
-  billing_account_id = local.account_id
-  role               = "roles/billing.viewer"
-  member             = "serviceAccount:${var.runtime_service_account_email}"
+removed {
+  from = google_billing_account_iam_member.runtime_budget_viewer
+  lifecycle { destroy = false }
 }

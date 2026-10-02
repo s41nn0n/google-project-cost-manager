@@ -20,7 +20,8 @@ resource "google_pubsub_subscription_iam_member" "dead_letter_subscriber" {
 }
 
 resource "google_service_account_iam_member" "scheduler_token_creator" {
-  service_account_id = google_service_account.scheduler_invoker.name
+  service_account_id = "projects/${var.control_project_id}/serviceAccounts/billing-guard-scheduler@${var.control_project_id}.iam.gserviceaccount.com"
   role               = "roles/iam.serviceAccountTokenCreator"
-  member             = "serviceAccount:service-@gcp-sa-cloudscheduler.iam.gserviceaccount.com"
+  member             = "serviceAccount:service-${data.google_project.control.number}@gcp-sa-cloudscheduler.iam.gserviceaccount.com"
+  depends_on         = [google_project_service.required, google_service_account.scheduler_invoker]
 }

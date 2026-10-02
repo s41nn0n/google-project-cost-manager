@@ -20,6 +20,8 @@ type trackingBilling struct {
 	disableCalls int
 }
 
+func testReady(context.Context, *config.Config) error { return nil }
+
 func (b *trackingBilling) GetProjectBillingInfo(context.Context, string) (*billing.ProjectBillingInfo, error) {
 	copy := b.info
 	return &copy, nil
@@ -36,6 +38,7 @@ func organizationConfig(t *testing.T, mode string) *config.Config {
 	t.Helper()
 	yaml := `schemaVersion: 2
 organizationId: "123"
+enforcementEnabled: true
 controlProjectId: control
 defaults: {threshold: 0.8, dryRun: false, action: disable_billing}
 unknownAlertPolicy: ignore
@@ -50,6 +53,8 @@ budgets:
   enforcementMode: ` + mode + `
   projects: [p1]
   threshold: 0.8
+  monthlyAmount: 100
+  currencyCode: USD
 `
 	cfg, err := config.Parse([]byte(yaml))
 	if err != nil {
@@ -63,6 +68,7 @@ func organizationPush(t *testing.T, overrides map[string]any) []byte {
 	alert := map[string]any{
 		"billingAccountId": "AAA", "budgetId": "BBB", "costAmount": 80.0,
 		"budgetAmount": 100.0, "alertThresholdExceeded": 0.8,
+		"currencyCode":      "USD",
 		"costIntervalStart": time.Date(time.Now().UTC().Year(), time.Now().UTC().Month(), 1, 0, 0, 0, 0, time.UTC).Format(time.RFC3339),
 	}
 	for key, value := range overrides {
@@ -78,7 +84,7 @@ func organizationPush(t *testing.T, overrides map[string]any) []byte {
 
 func serveOrganization(t *testing.T, cfg *config.Config, client *trackingBilling, body []byte) *httptest.ResponseRecorder {
 	t.Helper()
-	server, err := NewServer(Options{Billing: client, EventStore: &eventstate.MemoryStore{}, LoadConfig: func(context.Context) (*config.Config, error) { return cfg, nil }})
+	server, err := NewServer(Options{ReadinessCheck: testReady, Billing: client, EventStore: &eventstate.MemoryStore{}, LoadConfig: func(context.Context) (*config.Config, error) { return cfg, nil }})
 	if err != nil {
 		t.Fatal(err)
 	}

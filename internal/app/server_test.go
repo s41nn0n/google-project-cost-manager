@@ -3,8 +3,6 @@ package app
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -12,13 +10,14 @@ import (
 
 	"github.com/example/google-project-cost-manager/internal/billing"
 	"github.com/example/google-project-cost-manager/internal/config"
+	"github.com/example/google-project-cost-manager/internal/eventstate"
 	"github.com/example/google-project-cost-manager/internal/reconcile"
 )
 
 type failingBilling struct{}
 
 func (f failingBilling) GetProjectBillingInfo(context.Context, string) (*billing.ProjectBillingInfo, error) {
-	return nil, nil
+	return &billing.ProjectBillingInfo{BillingEnabled: true, BillingAccountName: "billingAccounts/AAA"}, nil
 }
 func (f failingBilling) DisableBilling(context.Context, string) error { return errors.New("boom") }
 func (f failingBilling) SetBillingAccount(context.Context, string, string) error {
@@ -36,21 +35,12 @@ type fakeProjectResolver struct{}
 func (fakeProjectResolver) ResolveProjectID(context.Context, string) (string, error) { return "", nil }
 
 func TestBillingAlertDisableFailureReturns500(t *testing.T) {
-	cfg, err := config.Parse([]byte(`defaults:
-  dryRun: false
-budgets:
-- names: [prod-budget]
-  projects: [p1]
-`))
+	cfg := organizationConfig(t, "live")
+	s, err := NewServer(Options{ReadinessCheck: testReady, Billing: failingBilling{}, EventStore: &eventstate.MemoryStore{}, LoadConfig: func(context.Context) (*config.Config, error) { return cfg, nil }})
 	if err != nil {
 		t.Fatal(err)
 	}
-	s, err := NewServer(Options{Billing: failingBilling{}, LoadConfig: func(context.Context) (*config.Config, error) { return cfg, nil }})
-	if err != nil {
-		t.Fatal(err)
-	}
-	alert, _ := json.Marshal(map[string]any{"budgetDisplayName": "prod-budget", "costAmount": 1, "budgetAmount": 1})
-	push, _ := json.Marshal(map[string]any{"message": map[string]any{"data": base64.StdEncoding.EncodeToString(alert)}})
+	push := organizationPush(t, nil)
 	req := httptest.NewRequest(http.MethodPost, "/pubsub/billing-alert", bytes.NewReader(push))
 	res := httptest.NewRecorder()
 	s.Router().ServeHTTP(res, req)

@@ -55,16 +55,17 @@ func terraformInputs(result Result, policy ReviewedPolicy) ([]byte, error) {
 	for name, account := range policy.BillingAccounts {
 		projects := map[string]any{}
 		for _, project := range result.Inventory.Projects {
-			if project.BillingAccountName != name {
+			if project.BillingAccountName != name && project.BudgetAccountName != name {
 				continue
 			}
 			projects[project.ProjectID] = map[string]any{
-				"project_number":      project.ProjectNumber,
-				"classification":      project.Classification,
-				"protected_reason":    project.Reason,
-				"monthly_amount":      project.MonthlyAmount,
-				"currency_code":       project.CurrencyCode,
-				"budget_display_name": project.CanonicalDisplayName,
+				"project_number":       project.ProjectNumber,
+				"classification":       project.Classification,
+				"protected_reason":     project.Reason,
+				"monthly_amount":       project.MonthlyAmount,
+				"currency_code":        project.CurrencyCode,
+				"budget_display_name":  project.CanonicalDisplayName,
+				"budget_resource_name": project.ImportCandidate,
 			}
 		}
 		accounts[name] = map[string]any{"default_monthly_amount": account.DefaultMonthlyAmount, "currency_code": account.CurrencyCode, "projects": projects}

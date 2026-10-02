@@ -1,0 +1,7 @@
+#!/usr/bin/env sh
+set -eu
+binary=${1:?usage: check-binary-vulnerabilities BINARY}
+finops_vuln_report=$(mktemp /tmp/finops-vuln-report.XXXXXX)
+trap 'rm -f "$finops_vuln_report"' EXIT HUP INT TERM
+go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 -json -mode=binary "$binary" > "$finops_vuln_report"
+sh "$(dirname "$0")/check-vulnerability-report" "$finops_vuln_report"

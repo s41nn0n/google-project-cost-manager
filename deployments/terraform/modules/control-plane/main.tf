@@ -15,7 +15,8 @@ locals {
     "run.googleapis.com",
     "secretmanager.googleapis.com",
   ])
-  policy_secret_id = coalesce(var.existing_policy_secret_id, try(google_secret_manager_secret.policy[0].id, null))
+  policy_secret_id = coalesce(var.existing_policy_secret_id, "projects/${var.control_project_id}/secrets/billing-guard-policy")
+  runtime_member   = "serviceAccount:billing-guard-runtime@${var.control_project_id}.iam.gserviceaccount.com"
 }
 
 resource "google_project_service" "required" {
@@ -58,9 +59,10 @@ resource "google_firestore_database" "events" {
 }
 
 resource "google_project_iam_member" "runtime_firestore" {
-  project = var.control_project_id
-  role    = "roles/datastore.user"
-  member  = "serviceAccount:${google_service_account.runtime.email}"
+  project    = var.control_project_id
+  role       = "roles/datastore.user"
+  member     = local.runtime_member
+  depends_on = [google_service_account.runtime]
 }
 
 resource "google_secret_manager_secret" "policy" {
@@ -74,10 +76,11 @@ resource "google_secret_manager_secret" "policy" {
 }
 
 resource "google_secret_manager_secret_iam_member" "runtime_policy" {
-  project   = var.control_project_id
-  secret_id = local.policy_secret_id
-  role      = "roles/secretmanager.secretAccessor"
-  member    = "serviceAccount:${google_service_account.runtime.email}"
+  project    = var.control_project_id
+  secret_id  = local.policy_secret_id
+  role       = "roles/secretmanager.secretAccessor"
+  member     = local.runtime_member
+  depends_on = [google_service_account.runtime, google_secret_manager_secret.policy]
 }
 
 resource "google_pubsub_topic" "billing_alerts" {
@@ -99,7 +102,7 @@ resource "google_cloud_run_v2_service" "receiver" {
   deletion_protection = true
   ingress             = "INGRESS_TRAFFIC_ALL"
   template {
-    service_account = google_service_account.runtime.email
+    service_account = "billing-guard-runtime@${var.control_project_id}.iam.gserviceaccount.com"
     containers {
       image = var.image_digest
       env {
@@ -120,7 +123,7 @@ resource "google_cloud_run_v2_service" "receiver" {
       }
     }
   }
-  depends_on = [google_project_service.required, google_secret_manager_secret_iam_member.runtime_policy, google_secret_manager_secret_version.bootstrap_policy]
+  depends_on = [google_project_service.required, google_service_account.runtime, google_secret_manager_secret_iam_member.runtime_policy, google_secret_manager_secret_version.bootstrap_policy]
 }
 
 resource "google_cloud_run_v2_service" "admin" {
@@ -130,7 +133,7 @@ resource "google_cloud_run_v2_service" "admin" {
   deletion_protection = true
   ingress             = "INGRESS_TRAFFIC_ALL"
   template {
-    service_account = google_service_account.runtime.email
+    service_account = "billing-guard-runtime@${var.control_project_id}.iam.gserviceaccount.com"
     containers {
       image = var.image_digest
       env {
@@ -151,23 +154,25 @@ resource "google_cloud_run_v2_service" "admin" {
       }
     }
   }
-  depends_on = [google_project_service.required, google_secret_manager_secret_iam_member.runtime_policy, google_secret_manager_secret_version.bootstrap_policy]
+  depends_on = [google_project_service.required, google_service_account.runtime, google_secret_manager_secret_iam_member.runtime_policy, google_secret_manager_secret_version.bootstrap_policy]
 }
 
 resource "google_cloud_run_v2_service_iam_member" "pubsub_receiver" {
-  project  = var.control_project_id
-  location = google_cloud_run_v2_service.receiver.location
-  name     = google_cloud_run_v2_service.receiver.name
-  role     = "roles/run.invoker"
-  member   = "serviceAccount:${google_service_account.pubsub_invoker.email}"
+  project    = var.control_project_id
+  location   = google_cloud_run_v2_service.receiver.location
+  name       = "billing-guard-receiver"
+  role       = "roles/run.invoker"
+  member     = "serviceAccount:billing-guard-pubsub@${var.control_project_id}.iam.gserviceaccount.com"
+  depends_on = [google_cloud_run_v2_service.receiver]
 }
 
 resource "google_cloud_run_v2_service_iam_member" "scheduler_admin" {
-  project  = var.control_project_id
-  location = google_cloud_run_v2_service.admin.location
-  name     = google_cloud_run_v2_service.admin.name
-  role     = "roles/run.invoker"
-  member   = "serviceAccount:${google_service_account.scheduler_invoker.email}"
+  project    = var.control_project_id
+  location   = google_cloud_run_v2_service.admin.location
+  name       = "billing-guard-admin"
+  role       = "roles/run.invoker"
+  member     = "serviceAccount:billing-guard-scheduler@${var.control_project_id}.iam.gserviceaccount.com"
+  depends_on = [google_cloud_run_v2_service.admin]
 }
 
 resource "google_cloud_run_v2_service_iam_member" "admin" {
@@ -180,9 +185,10 @@ resource "google_cloud_run_v2_service_iam_member" "admin" {
 }
 
 resource "google_service_account_iam_member" "pubsub_token_creator" {
-  service_account_id = google_service_account.pubsub_invoker.name
+  service_account_id = "projects/${var.control_project_id}/serviceAccounts/billing-guard-pubsub@${var.control_project_id}.iam.gserviceaccount.com"
   role               = "roles/iam.serviceAccountTokenCreator"
-  member             = "serviceAccount:service-@gcp-sa-pubsub.iam.gserviceaccount.com"
+  member             = "serviceAccount:service-${data.google_project.control.number}@gcp-sa-pubsub.iam.gserviceaccount.com"
+  depends_on         = [google_project_service.required, google_service_account.pubsub_invoker, google_pubsub_topic.billing_alerts]
 }
 
 resource "google_pubsub_subscription" "receiver" {

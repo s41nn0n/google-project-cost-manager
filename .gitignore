@@ -5,4 +5,10 @@
 /tmp
 .pi/
 .terraform/
+gha-creds-*.json
+credentials*.json
+*-credentials.json
+application_default_credentials.json
+*.pem
+*.key
 terraform.tfstate*

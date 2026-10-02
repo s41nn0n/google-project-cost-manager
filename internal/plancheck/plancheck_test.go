@@ -27,8 +27,8 @@ func TestOnboardingOnlyCreatesExpectedFinOpsResources(t *testing.T) {
 {"address":"google_billing_budget.project[\"new\"]","type":"google_billing_budget","change":{"actions":["create"]}},
 {"address":"google_project_iam_member.runtime_billing_unlink[\"new\"]","type":"google_project_iam_member","change":{"actions":["create"]}}
 ]}`)
-	if err := ValidateOnboarding(good); err != nil {
-		t.Fatal(err)
+	if err := ValidateOnboarding(good); err == nil {
+		t.Fatal("an onboarding plan without a reviewed scope must fail")
 	}
 	bad := plan(t, `{"resource_changes":[{"address":"google_compute_instance.app","type":"google_compute_instance","change":{"actions":["delete","create"]}}]}`)
 	if err := ValidateOnboarding(bad); err == nil {

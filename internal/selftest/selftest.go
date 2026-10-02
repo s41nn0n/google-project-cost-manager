@@ -115,6 +115,10 @@ func RunWithReconciler(ctx context.Context, mode string, c *config.Config, bc bi
 		if err != nil {
 			return r
 		}
+		if info == nil || !info.BillingEnabled || info.BillingAccountName != acct {
+			add("expected_billing_link", false, "", errors.New("disposable project is not linked to the expected account"))
+			return r
+		}
 		if err := bc.DisableBilling(ctx, p); err != nil {
 			add("disable_billing", false, "", err)
 			return r
@@ -128,7 +132,7 @@ func RunWithReconciler(ctx context.Context, mode string, c *config.Config, bc bi
 			}
 			add("restore_billing", true, acct, nil)
 			info, err = bc.GetProjectBillingInfo(ctx, p)
-			ok := err == nil && info != nil && info.BillingEnabled
+			ok := err == nil && info != nil && info.BillingEnabled && info.BillingAccountName == acct
 			add("confirm_enabled", ok, fmt.Sprintf("enabled=%v account=%s", infoVal(info), acctVal(info)), combine(err, ok, "billing not enabled"))
 			if ok {
 				r.FinalState = "billing_enabled"

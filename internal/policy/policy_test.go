@@ -9,7 +9,7 @@ import (
 
 func TestEvaluateMultiProjectBudgetWithSafety(t *testing.T) {
 	c, _ := config.Parse([]byte(`defaults:
-  dryRun: false
+  dryRun: true
 budgets:
 - names: [prod-budget]
   projects: [p1, p2]
@@ -20,7 +20,7 @@ maxProjectsDisabledPerEvent: 1
 	if len(ev.Decisions) != 2 {
 		t.Fatalf("got %d decisions", len(ev.Decisions))
 	}
-	if !ev.Decisions[0].Disable || ev.Decisions[1].Disable {
+	if !ev.Decisions[0].DryRun || !ev.Decisions[1].DryRun {
 		t.Fatalf("unexpected decisions: %+v", ev.Decisions)
 	}
 }
@@ -35,7 +35,7 @@ func TestUnknownDefaultsDryRun(t *testing.T) {
 
 func TestUnknownPolicyCanTargetExplicitFallbackProjects(t *testing.T) {
 	c, err := config.Parse([]byte(`defaults:
-  dryRun: false
+  dryRun: true
 unknownAlertPolicy: disable_billing
 unknownAlertProjects: [fallback-test]
 budgets: []
@@ -44,14 +44,14 @@ budgets: []
 		t.Fatal(err)
 	}
 	ev := Evaluate(c, pubsub.BudgetAlert{BudgetDisplayName: "missing", CostAmount: 1, BudgetAmount: 1})
-	if !ev.Unknown || len(ev.Decisions) != 1 || ev.Decisions[0].ProjectID != "fallback-test" || !ev.Decisions[0].Disable {
+	if !ev.Unknown || len(ev.Decisions) != 1 || ev.Decisions[0].Disable || !ev.Decisions[0].DryRun {
 		t.Fatalf("unexpected unknown fallback eval: %+v", ev)
 	}
 }
 
 func TestActionDryRunAndIgnoreDoNotDisable(t *testing.T) {
 	c, _ := config.Parse([]byte(`defaults:
-  dryRun: false
+  dryRun: true
 budgets:
 - names: [prod-budget]
   projects: [p1, p2]

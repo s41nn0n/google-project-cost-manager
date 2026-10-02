@@ -81,7 +81,7 @@ budgets:
 			t.Fatalf("missing diff %s in %+v", typ, r.Diffs)
 		}
 	}
-	if r.Summary.Errors != 2 || r.Summary.Warnings != 3 {
+	if r.Summary.Errors != 4 || r.Summary.Warnings != 1 {
 		t.Fatalf("bad summary: %+v", r.Summary)
 	}
 }

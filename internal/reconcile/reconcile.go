@@ -3,6 +3,7 @@ package reconcile
 import (
 	"context"
 	"fmt"
+	"math"
 	"sort"
 	"strings"
 
@@ -15,15 +16,25 @@ const (
 )
 
 type Budget struct {
-	Name        string
-	DisplayName string
-	Projects    []string
-	Thresholds  []float64
-	PubSubTopic string
+	Name             string
+	DisplayName      string
+	Projects         []string
+	Thresholds       []float64
+	PubSubTopic      string
+	CalendarPeriod   string
+	MonthlyAmount    float64
+	CurrencyCode     string
+	CreditTreatment  string
+	SpendBases       []string
+	RestrictedFilter bool
 }
 
 type BudgetLister interface {
 	ListBudgets(ctx context.Context, billingAccountName string) ([]Budget, error)
+}
+
+type BillingLinkResolver interface {
+	BillingAccount(context.Context, string) (string, error)
 }
 
 type ProjectResolver interface {
@@ -92,6 +103,15 @@ func Run(ctx context.Context, cfg *config.Config, lister BudgetLister, resolver 
 			names = append([]string{cb.BudgetResourceName}, names...)
 		}
 		idx := findBudget(budgets, names)
+		if cb.BudgetResourceName != "" {
+			idx = -1
+			for i, b := range budgets {
+				if b.Name == cb.BudgetResourceName {
+					idx = i
+					break
+				}
+			}
+		}
 		if idx < 0 {
 			name := firstName(cb.Names)
 			r.add(Diff{Type: "configured_budget_missing_in_gcp", Severity: SeverityError, ConfiguredName: name, Message: "Config has policy for a budget that does not exist in GCP"})
@@ -99,6 +119,30 @@ func Run(ctx context.Context, cfg *config.Config, lister BudgetLister, resolver 
 		}
 		matchedGCP[idx] = true
 		gb := budgets[idx]
+		if cb.BudgetResourceName != "" {
+			if gb.RestrictedFilter {
+				r.add(Diff{Type: "budget_filter_diff", Severity: SeverityError, BudgetName: gb.Name, Message: "canonical budget has extra selectors or a custom period"})
+			}
+			if gb.CalendarPeriod != "MONTH" || gb.CreditTreatment != "INCLUDE_ALL_CREDITS" || cb.MonthlyAmount <= 0 || math.Abs(cb.MonthlyAmount-gb.MonthlyAmount) > 0.000001 || cb.CurrencyCode == "" || cb.CurrencyCode != gb.CurrencyCode {
+				r.add(Diff{Type: "budget_terms_diff", Severity: SeverityError, BudgetName: gb.Name, Message: "canonical amount, currency, period or credit treatment differs"})
+			}
+			if len(gb.Thresholds) != 3 || !thresholdContains(gb.Thresholds, 0.5) || !thresholdContains(gb.Thresholds, 0.8) || !thresholdContains(gb.Thresholds, 1) || len(gb.SpendBases) != 3 {
+				r.add(Diff{Type: "actual_thresholds_diff", Severity: SeverityError, BudgetName: gb.Name})
+			} else {
+				for _, basis := range gb.SpendBases {
+					if basis != "CURRENT_SPEND" {
+						r.add(Diff{Type: "forecast_threshold_diff", Severity: SeverityError, BudgetName: gb.Name})
+						break
+					}
+				}
+			}
+			link, ok := resolver.(BillingLinkResolver)
+			if !ok {
+				r.add(Diff{Type: "billing_link_unverified", Severity: SeverityError, BudgetName: gb.Name})
+			} else if account, err := link.BillingAccount(ctx, cb.ProjectID); err != nil || (account != "" && account != cb.BillingAccountName) {
+				r.add(Diff{Type: "billing_link_diff", Severity: SeverityError, BudgetName: gb.Name, Message: "billing link inaccessible or moved"})
+			}
+		}
 		if diff, ok := projectDiff(ctx, cb.Projects, gb.Projects, gb, resolver); ok {
 			r.add(diff)
 		}
@@ -107,7 +151,7 @@ func Run(ctx context.Context, cfg *config.Config, lister BudgetLister, resolver 
 			configuredThreshold = cfg.Defaults.Threshold
 		}
 		if !thresholdContains(gb.Thresholds, configuredThreshold) {
-			r.add(Diff{Type: "threshold_diff", Severity: SeverityWarning, BudgetDisplayName: gb.DisplayName, BudgetName: gb.Name, GCPThresholds: gb.Thresholds, ConfiguredThreshold: configuredThreshold})
+			r.add(Diff{Type: "threshold_diff", Severity: SeverityError, BudgetDisplayName: gb.DisplayName, BudgetName: gb.Name, GCPThresholds: gb.Thresholds, ConfiguredThreshold: configuredThreshold})
 		}
 		if cfg.Reconcile.RequiredPubSubTopic != "" && gb.PubSubTopic != cfg.Reconcile.RequiredPubSubTopic {
 			r.add(Diff{Type: "pubsub_topic_missing_or_mismatch", Severity: SeverityError, BudgetDisplayName: gb.DisplayName, BudgetName: gb.Name, ExpectedTopic: cfg.Reconcile.RequiredPubSubTopic, ActualTopic: gb.PubSubTopic, Message: "Budget Pub/Sub notification topic does not match required topic"})
@@ -159,7 +203,7 @@ func projectDiff(ctx context.Context, configured, gcp []string, b Budget, resolv
 		if resolver != nil {
 			resolved, err := resolver.ResolveProjectID(ctx, p)
 			if err != nil {
-				return Diff{Type: "project_scope_diff", Severity: SeverityWarning, BudgetDisplayName: b.DisplayName, BudgetName: b.Name, Message: "resolve GCP budget project " + p + ": " + err.Error()}, true
+				return Diff{Type: "project_scope_diff", Severity: SeverityError, BudgetDisplayName: b.DisplayName, BudgetName: b.Name, Message: "resolve GCP budget project " + p + ": " + err.Error()}, true
 			}
 			if resolved != "" {
 				id = strings.TrimPrefix(resolved, "projects/")
@@ -183,7 +227,7 @@ func projectDiff(ctx context.Context, configured, gcp []string, b Budget, resolv
 	if len(inGCPNotConfig) == 0 && len(inConfigNotGCP) == 0 {
 		return Diff{}, false
 	}
-	return Diff{Type: "project_scope_diff", Severity: SeverityWarning, BudgetDisplayName: b.DisplayName, BudgetName: b.Name, ProjectsInGCPNotConfig: inGCPNotConfig, ProjectsInConfigNotGCP: inConfigNotGCP}, true
+	return Diff{Type: "project_scope_diff", Severity: SeverityError, BudgetDisplayName: b.DisplayName, BudgetName: b.Name, ProjectsInGCPNotConfig: inGCPNotConfig, ProjectsInConfigNotGCP: inConfigNotGCP}, true
 }
 
 func set(vals []string) map[string]bool {

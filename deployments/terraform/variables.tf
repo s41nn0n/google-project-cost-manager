@@ -1,4 +1,6 @@
 variable "control_project_id" { type = string }
+variable "notification_channels" { type = list(string) }
+variable "inventory_observed_at" { type = string }
 variable "organization_id" { type = string }
 variable "region" {
   type    = string

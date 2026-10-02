@@ -4,8 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"regexp"
+	"strings"
+	"time"
 
 	secretmanager "cloud.google.com/go/secretmanager/apiv1"
 	secretmanagerpb "cloud.google.com/go/secretmanager/apiv1/secretmanagerpb"
@@ -19,6 +22,9 @@ const (
 
 type Config struct {
 	SchemaVersion               int                      `yaml:"schemaVersion" json:"schemaVersion"`
+	EnforcementEnabled          bool                     `yaml:"enforcementEnabled" json:"enforcementEnabled"`
+	InventoryObservedAt         time.Time                `yaml:"inventoryObservedAt" json:"inventoryObservedAt"`
+	ReleaseID                   string                   `yaml:"releaseId" json:"releaseId"`
 	OrganizationID              string                   `yaml:"organizationId" json:"organizationId"`
 	ControlProjectID            string                   `yaml:"controlProjectId" json:"controlProjectId"`
 	EventState                  EventStateConfig         `yaml:"eventState" json:"eventState"`
@@ -61,6 +67,8 @@ type Budget struct {
 	ProjectID          string   `yaml:"projectId" json:"projectId"`
 	ProjectNumber      string   `yaml:"projectNumber" json:"projectNumber"`
 	EnforcementMode    string   `yaml:"enforcementMode" json:"enforcementMode"`
+	MonthlyAmount      float64  `yaml:"monthlyAmount" json:"monthlyAmount"`
+	CurrencyCode       string   `yaml:"currencyCode" json:"currencyCode"`
 	Names              []string `yaml:"names" json:"names"`
 	Projects           []string `yaml:"projects" json:"projects"`
 	Threshold          float64  `yaml:"threshold" json:"threshold"`
@@ -189,7 +197,14 @@ func (c *Config) ApplyDefaults() {
 }
 
 func (c *Config) Validate() error {
-	if c.Defaults.Threshold < 0 || c.Defaults.Threshold > 1 {
+	if c.SchemaVersion < 0 || c.SchemaVersion > 2 {
+		return errors.New("unsupported schemaVersion")
+	}
+	if c.SchemaVersion < 2 && (c.EnforcementEnabled || (c.Defaults.DryRun != nil && !*c.Defaults.DryRun)) {
+		return errors.New("legacy configuration is dry-run only; live enforcement requires schemaVersion 2 and canonical identities")
+	}
+	seen := map[string]bool{}
+	if math.IsNaN(c.Defaults.Threshold) || math.IsInf(c.Defaults.Threshold, 0) || c.Defaults.Threshold < 0 || c.Defaults.Threshold > 1 {
 		return errors.New("defaults.threshold must be between 0 and 1")
 	}
 	if !validAction(c.Defaults.Action) {
@@ -223,12 +238,19 @@ func (c *Config) Validate() error {
 	}
 	for _, b := range c.Budgets {
 		if c.SchemaVersion >= 2 {
+			if c.EnforcementEnabled && (b.MonthlyAmount <= 0 || math.IsNaN(b.MonthlyAmount) || math.IsInf(b.MonthlyAmount, 0) || len(b.CurrencyCode) != 3) {
+				return errors.New("live policy requires reviewed positive amount and currency")
+			}
 			if b.EnforcementMode != "dry_run" && b.EnforcementMode != "live" {
 				return errors.New("budget.enforcementMode must be dry_run or live")
 			}
 			if b.BudgetResourceName == "" || b.BillingAccountName == "" || b.ProjectID == "" || b.ProjectNumber == "" {
 				return errors.New("schemaVersion 2 budgets require canonical budget, billing account, project ID, and project number")
 			}
+			if !strings.HasPrefix(b.BudgetResourceName, b.BillingAccountName+"/budgets/") || seen[b.BudgetResourceName] {
+				return errors.New("canonical budget must be unique and belong to its configured billing account")
+			}
+			seen[b.BudgetResourceName] = true
 			if len(b.Projects) != 1 || b.Projects[0] != b.ProjectID {
 				return errors.New("schemaVersion 2 budgets must cover exactly their canonical project")
 			}

@@ -9,12 +9,14 @@ import (
 	billingbudgets "google.golang.org/api/billingbudgets/v1"
 	cloudasset "google.golang.org/api/cloudasset/v1"
 	cloudbilling "google.golang.org/api/cloudbilling/v1"
+	cloudresourcemanager "google.golang.org/api/cloudresourcemanager/v1"
 )
 
 type GCPClient struct {
-	assets  *cloudasset.Service
-	billing *cloudbilling.APIService
-	budgets *billingbudgets.Service
+	assets   *cloudasset.Service
+	billing  *cloudbilling.APIService
+	budgets  *billingbudgets.Service
+	projects *cloudresourcemanager.Service
 }
 
 func NewGCPClient(ctx context.Context) (*GCPClient, error) {
@@ -30,7 +32,11 @@ func NewGCPClient(ctx context.Context) (*GCPClient, error) {
 	if err != nil {
 		return nil, fmt.Errorf("billing budgets client: %w", err)
 	}
-	return &GCPClient{assets: assets, billing: billing, budgets: budgets}, nil
+	projects, err := cloudresourcemanager.NewService(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("project metadata client: %w", err)
+	}
+	return &GCPClient{assets: assets, billing: billing, budgets: budgets, projects: projects}, nil
 }
 
 func (c *GCPClient) ListProjects(ctx context.Context, organization string) ([]Project, error) {
@@ -46,13 +52,21 @@ func (c *GCPClient) ListProjects(ctx context.Context, organization string) ([]Pr
 			if number == "" {
 				number = strings.TrimPrefix(resource.Name, "//cloudresourcemanager.googleapis.com/projects/")
 			}
-			if attrs.ProjectID == "" {
-				attrs.ProjectID = resource.DisplayName
+			state := resource.State
+			if attrs.ProjectID == "" && number != "" {
+				if c.projects == nil {
+					return fmt.Errorf("project metadata lookup required for %s", number)
+				}
+				metadata, err := c.projects.Projects.Get(number).Context(ctx).Do()
+				if err != nil {
+					return fmt.Errorf("resolve project identity %s: %w", number, err)
+				}
+				attrs.ProjectID, state = metadata.ProjectId, metadata.LifecycleState
 			}
 			if attrs.ProjectID == "" || number == "" {
 				return fmt.Errorf("Cloud Asset result lacks project identity: %s", resource.Name)
 			}
-			out = append(out, Project{ProjectID: attrs.ProjectID, ProjectNumber: number, DisplayName: resource.DisplayName, LifecycleState: resource.State})
+			out = append(out, Project{ProjectID: attrs.ProjectID, ProjectNumber: number, DisplayName: resource.DisplayName, LifecycleState: state})
 		}
 		return nil
 	})

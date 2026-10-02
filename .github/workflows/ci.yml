@@ -12,36 +12,49 @@ jobs:
   go:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           persist-credentials: false
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
         with:
-          go-version: '1.23.12'
+          go-version: '1.26.8'
           cache: true
       - name: Check formatting
         run: test -z "$(gofmt -l .)"
       - name: Test
         run: go test ./...
+      - name: Check reachable vulnerabilities
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
+      - name: Check built binary vulnerabilities
+        run: |
+          CGO_ENABLED=0 go build -trimpath -o "$RUNNER_TEMP/billing-guard" ./cmd/server
+          sh scripts/check-binary-vulnerabilities "$RUNNER_TEMP/billing-guard"
       - name: Vet
         run: go vet ./...
 
   docker:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           persist-credentials: false
       - name: Build image
         run: docker build -t billing-guard:ci .
+      - name: Scan image dependencies
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        with:
+          image-ref: billing-guard:ci
+          severity: CRITICAL,HIGH
+          ignore-unfixed: false
+          exit-code: '1'
 
   terraform:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           persist-credentials: false
-      - uses: hashicorp/setup-terraform@v3
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd
         with:
           terraform_version: '1.12.2'
       - name: Check formatting
@@ -52,7 +65,7 @@ jobs:
           terraform -chdir=deployments/terraform validate
       - name: Validate standalone modules
         run: |
-          for module in bootstrap control-plane billing-account; do
+          for module in bootstrap control-plane billing-account iam-onboarding; do
             terraform -chdir="deployments/terraform/modules/$module" init -backend=false -input=false
             terraform -chdir="deployments/terraform/modules/$module" validate
           done

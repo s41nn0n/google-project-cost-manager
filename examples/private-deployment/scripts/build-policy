@@ -1,0 +1,64 @@
+#!/usr/bin/env sh
+set -eu
+
+policy_dir=${1:?usage: build-policy POLICY_DIR ORGANIZATION_ID CONTROL_PROJECT_ID DATABASE_ID PUBSUB_TOPIC ENFORCEMENT_MODE}
+organization_id=${2:?organization ID is required}
+control_project_id=${3:?control project ID is required}
+database_id=${4:?database ID is required}
+pubsub_topic=${5:?Pub/Sub topic is required}
+enforcement_mode=${6:?enforcement mode is required}
+case "$enforcement_mode" in dry_run|live) ;; *) echo 'invalid enforcement mode' >&2; exit 1 ;; esac
+: "${RELEASE_ID:?verified release identity required}"
+: "${INVENTORY_OBSERVED_AT:?fresh verified inventory observation required}"
+case "${ENFORCEMENT_ENABLED:-false}" in true|false) ;; *) echo 'invalid global enforcement enable setting' >&2; exit 1 ;; esac
+
+jq -s \
+  --arg organization "$organization_id" \
+  --arg control "$control_project_id" \
+  --arg database "$database_id" \
+  --arg topic "$pubsub_topic" \
+  --arg mode "$enforcement_mode" \
+  --arg release "$RELEASE_ID" \
+  --arg observed "$INVENTORY_OBSERVED_AT" \
+  --arg enabled "${ENFORCEMENT_ENABLED:-false}" '
+  {
+    schemaVersion: 2,
+    enforcementEnabled: ($enabled == "true" and $mode == "live"),
+    inventoryObservedAt: $observed,
+    releaseId: $release,
+    organizationId: $organization,
+    controlProjectId: $control,
+    defaults: {threshold: 0.8, dryRun: ($mode != "live"), action: "disable_billing"},
+    maxProjectsDisabledPerEvent: 1,
+    unknownAlertPolicy: "ignore",
+    protectedProjects: (([$control] + [.[].protected_projects | keys[]]) | unique),
+    eventState: {
+      backend: "firestore",
+      projectId: $control,
+      databaseId: $database,
+      collection: "budget-events"
+    },
+    reconcile: {
+      enabled: true,
+      sourceOfTruth: "terraform",
+      mode: "diff_only",
+      billingAccountNames: ([.[].billing_account_name] | sort),
+      requiredPubSubTopic: $topic
+    },
+    budgets: ([
+      .[].budgets[]
+      | {
+          budgetResourceName: .budget_resource_name,
+          billingAccountName: .billing_account_name,
+          projectId: .project_id,
+          projectNumber: .project_number,
+          enforcementMode: (if $mode == "live" and $enabled == "true" then .enforcement_mode else "dry_run" end),
+          monthlyAmount: .monthly_amount,
+          currencyCode: .currency_code,
+          threshold: .threshold,
+          names: [],
+          projects: [.project_id]
+        }
+    ] | sort_by(.billingAccountName, .projectId))
+  }
+' "$policy_dir"/*.json

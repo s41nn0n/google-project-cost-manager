@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"strings"
 	"sync"
 	"time"
 
@@ -15,6 +14,7 @@ import (
 	"github.com/example/google-project-cost-manager/internal/eventstate"
 	"github.com/example/google-project-cost-manager/internal/policy"
 	"github.com/example/google-project-cost-manager/internal/pubsub"
+	"github.com/example/google-project-cost-manager/internal/readiness"
 	"github.com/example/google-project-cost-manager/internal/reconcile"
 	"github.com/example/google-project-cost-manager/internal/selftest"
 )
@@ -38,6 +38,7 @@ type Options struct {
 	EventStore        eventstate.Store
 	EventStoreFactory EventStoreFactory
 	RouteMode         string
+	ReadinessCheck    func(context.Context, *config.Config) error
 }
 
 type Server struct {
@@ -50,6 +51,9 @@ type Server struct {
 func NewServer(opt Options) (*Server, error) {
 	if opt.LoadConfig == nil {
 		opt.LoadConfig = config.LoadFromEnv
+	}
+	if opt.ReadinessCheck == nil {
+		opt.ReadinessCheck = readiness.VerifyEnforcement
 	}
 	if opt.SelfTestStore == nil {
 		opt.SelfTestStore = &selftest.MemoryStore{}
@@ -108,7 +112,7 @@ func (s *Server) billingAlert(w http.ResponseWriter, r *http.Request) {
 	}
 	evaluation := policy.Evaluate(cfg, envelope.Alert)
 	if cfg.SchemaVersion < 2 {
-		s.enforceLegacy(w, r, evaluation)
+		writeJSON(w, http.StatusOK, evaluation)
 		return
 	}
 	if envelope.MessageID == "" || envelope.PublishTime.IsZero() {
@@ -124,6 +128,12 @@ func (s *Server) billingAlert(w http.ResponseWriter, r *http.Request) {
 		if !decision.Disable || decision.DryRun || decision.ProjectID == "" {
 			continue
 		}
+		if err := s.opt.ReadinessCheck(r.Context(), cfg); err != nil {
+			decision.Disable, decision.Reason = false, "live_readiness_failed"
+			logAlert("stale_inventory", decision.ProjectID, err)
+			failed = true
+			continue
+		}
 		if err := s.enforceCanonical(r.Context(), cfg, envelope, decision); err != nil {
 			failed = true
 			logAlert("disable_failed", decision.ProjectID, err)
@@ -136,41 +146,9 @@ func (s *Server) billingAlert(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, evaluation)
 }
 
-func (s *Server) enforceLegacy(w http.ResponseWriter, r *http.Request, evaluation policy.Evaluation) {
-	client := s.opt.Billing
-	needsBilling := false
-	for _, decision := range evaluation.Decisions {
-		if decision.Disable && !decision.DryRun && decision.ProjectID != "" {
-			needsBilling = true
-			break
-		}
-	}
-	var err error
-	if client == nil && needsBilling {
-		client, err = billing.NewCloudClient(r.Context())
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-	}
-	failed := false
-	for i, decision := range evaluation.Decisions {
-		if decision.Disable && !decision.DryRun && decision.ProjectID != "" {
-			if err := client.DisableBilling(r.Context(), decision.ProjectID); err != nil {
-				evaluation.Decisions[i].Reason = "disable_failed: " + err.Error()
-				failed = true
-				logAlert("disable_failed", decision.ProjectID, err)
-			}
-		}
-	}
-	if failed {
-		writeJSON(w, http.StatusInternalServerError, evaluation)
-		return
-	}
-	writeJSON(w, http.StatusOK, evaluation)
-}
-
 func (s *Server) enforceCanonical(ctx context.Context, cfg *config.Config, envelope *pubsub.Envelope, decision *policy.Decision) error {
+	ctx, cancel := context.WithTimeout(ctx, 45*time.Second)
+	defer cancel()
 	client := s.opt.Billing
 	var err error
 	if client == nil {
@@ -217,7 +195,7 @@ func (s *Server) enforceCanonical(ctx context.Context, cfg *config.Config, envel
 	}
 	event := eventstate.Event{MessageID: envelope.MessageID, PublishTime: envelope.PublishTime, CostAmount: envelope.Alert.CostAmount}
 	key := eventstate.Key(decision.MatchedBudget, decision.ProjectID, start.UTC().Format("2006-01"))
-	disposition, err := store.Claim(ctx, key, event)
+	disposition, err := store.Claim(ctx, key, &event)
 	if err != nil {
 		decision.Reason = "event_state_claim_failed"
 		return err
@@ -225,7 +203,28 @@ func (s *Server) enforceCanonical(ctx context.Context, cfg *config.Config, envel
 	if disposition != eventstate.Accepted {
 		decision.Disable = false
 		decision.Reason = disposition + "_event"
+		if disposition == eventstate.Busy {
+			return errors.New("event processing lease is active; retry delivery")
+		}
 		return nil
+	}
+	info, err = client.GetProjectBillingInfo(ctx, decision.ProjectID)
+	if err != nil || info == nil {
+		_ = store.Complete(ctx, key, event, false)
+		return errors.New("billing link recheck failed")
+	}
+	if !info.BillingEnabled {
+		decision.Disable, decision.Reason = false, "already_disabled"
+		return store.Complete(ctx, key, event, true)
+	}
+	if info.BillingAccountName != decision.ExpectedBillingAccount {
+		decision.Disable, decision.Reason = false, "wrong_billing_account"
+		return store.Complete(ctx, key, event, false)
+	}
+	if err := s.opt.ReadinessCheck(ctx, cfg); err != nil {
+		decision.Disable, decision.Reason = false, "operator_enforcement_stopped"
+		_ = store.Complete(ctx, key, event, false)
+		return err
 	}
 	if err := client.DisableBilling(ctx, decision.ProjectID); err != nil {
 		decision.Reason = "disable_failed: " + err.Error()
@@ -271,13 +270,9 @@ func (s *Server) selfTest(w http.ResponseWriter, r *http.Request) {
 	if mode == "" {
 		mode = "dry_run"
 	}
-	if mode == "billing_toggle" && cfg.SelfTest.RestoreBillingAccountNameSecret != "" && cfg.SelfTest.BillingAccountName == "" {
-		secretValue, err := config.AccessSecretString(r.Context(), cfg.SelfTest.RestoreBillingAccountNameSecret, "latest")
-		if err != nil {
-			http.Error(w, "resolve restore billing account secret: "+err.Error(), http.StatusInternalServerError)
-			return
-		}
-		cfg.SelfTest.BillingAccountName = strings.TrimSpace(secretValue)
+	if mode == "billing_toggle" {
+		http.Error(w, "billing toggle is an explicit operator CLI action, not a runtime route", http.StatusForbidden)
+		return
 	}
 	client := s.opt.Billing
 	var runner selftest.ReconcileRunner
@@ -324,6 +319,20 @@ func (s *Server) reconcile(w http.ResponseWriter, r *http.Request) {
 		runner = reconcile.Run
 	}
 	result, err := runner(r.Context(), cfg, lister, resolver)
+	if cfg.SchemaVersion >= 2 {
+		passed := err == nil && result.Summary.Errors == 0 && readiness.CheckFresh(cfg, time.Now().UTC()) == nil
+		evidence, openErr := readiness.New(r.Context(), cfg)
+		if openErr == nil {
+			openErr = evidence.RecordDay(r.Context(), cfg, time.Now().UTC(), passed)
+			_ = evidence.Close()
+		}
+		if openErr != nil {
+			err = fmt.Errorf("persist reconciliation evidence: %w", openErr)
+		}
+		if !passed {
+			logAlert("stale_inventory", "", errors.New("reconciliation or inventory freshness check failed"))
+		}
+	}
 	if err != nil {
 		logAlert("reconciliation_error", "", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)

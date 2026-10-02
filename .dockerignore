@@ -7,5 +7,16 @@
 **/.terraform.lock.hcl
 terraform.tfstate*
 .env
+gha-creds-*.json
+**/gha-creds-*.json
+**/credentials*.json
+**/*-credentials.json
+**/application_default_credentials.json
+**/*.pem
+**/*.key
+*.tfplan
+**/*.tfplan
+*.tfstate
+**/*.tfstate
 *.log
 .DS_Store

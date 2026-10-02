@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	cloudasset "google.golang.org/api/cloudasset/v1"
+	cloudresourcemanager "google.golang.org/api/cloudresourcemanager/v1"
 	"google.golang.org/api/option"
 )
 
@@ -34,6 +35,32 @@ func TestListProjectsPaginates(t *testing.T) {
 	}
 	if requests != 2 || len(projects) != 2 || projects[1].ProjectID != "p-two" || projects[1].ProjectNumber != "22" {
 		t.Fatalf("requests=%d projects=%+v", requests, projects)
+	}
+}
+
+func TestMissingAssetProjectIDIsResolvedNotGuessedFromDisplayName(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if strings.HasSuffix(r.URL.Path, "/projects/11") {
+			fmt.Fprint(w, `{"projectId":"real-project","projectNumber":"11","lifecycleState":"ACTIVE"}`)
+			return
+		}
+		fmt.Fprint(w, `{"results":[{"name":"//cloudresourcemanager.googleapis.com/projects/11","project":"projects/11","displayName":"Friendly human name","state":"ACTIVE"}]}`)
+	}))
+	defer server.Close()
+	ctx := context.Background()
+	opts := []option.ClientOption{option.WithEndpoint(server.URL + "/"), option.WithoutAuthentication()}
+	assets, err := cloudasset.NewService(ctx, opts...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	projects, err := cloudresourcemanager.NewService(ctx, opts...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	items, err := (&GCPClient{assets: assets, projects: projects}).ListProjects(ctx, "organizations/123")
+	if err != nil || len(items) != 1 || items[0].ProjectID != "real-project" {
+		t.Fatalf("identity=%+v error=%v", items, err)
 	}
 }
 

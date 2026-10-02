@@ -37,12 +37,6 @@ resource "google_storage_bucket_iam_member" "state_plan" {
   member = "serviceAccount:${google_service_account.plan.email}"
 }
 
-resource "google_storage_bucket_iam_member" "state_apply" {
-  bucket = google_storage_bucket.state.name
-  role   = "roles/storage.objectUser"
-  member = "serviceAccount:${google_service_account.apply.email}"
-}
-
 resource "google_iam_workload_identity_pool" "github" {
   project                   = var.control_project_id
   workload_identity_pool_id = var.workload_identity_pool_id
@@ -57,17 +51,19 @@ resource "google_iam_workload_identity_pool_provider" "github" {
   workload_identity_pool_provider_id = "github"
   display_name                       = "Billing Guard GitHub provider"
   attribute_mapping = {
-    "google.subject"       = "assertion.sub"
-    "attribute.repository" = "assertion.repository"
-    "attribute.ref"        = "assertion.ref"
+    "google.subject"          = "assertion.sub"
+    "attribute.repository"    = "assertion.repository"
+    "attribute.ref"           = "assertion.ref"
+    "attribute.repository_id" = "assertion.repository_id"
+    "attribute.apply"         = "assertion.ref == 'refs/heads/main' && assertion.event_name in ['push', 'workflow_dispatch', 'schedule'] && assertion.actor_id in [${join(",", [for id in var.github_apply_actor_ids : "'${id}'"])}] && assertion.workflow_ref == '${var.github_repository}/.github/workflows/terraform.yml@refs/heads/main' ? assertion.repository_id : 'denied'"
   }
-  attribute_condition = "assertion.repository == '${var.github_repository}'"
+  attribute_condition = "assertion.repository == '${var.github_repository}' && assertion.repository_id == '${var.github_repository_id}' && assertion.repository_owner_id == '${var.github_repository_owner_id}'"
   oidc { issuer_uri = "https://token.actions.githubusercontent.com" }
 }
 
 locals {
-  github_principal       = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/attribute.repository/${var.github_repository}"
-  github_apply_principal = "principal://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/subject/repo:${var.github_repository}:environment:${var.github_apply_environment}"
+  github_principal       = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/attribute.repository_id/${var.github_repository_id}"
+  github_apply_principal = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/attribute.apply/${var.github_repository_id}"
 }
 
 resource "google_service_account_iam_member" "github_plan" {
@@ -76,8 +72,49 @@ resource "google_service_account_iam_member" "github_plan" {
   member             = local.github_principal
 }
 
-resource "google_service_account_iam_member" "github_apply" {
-  service_account_id = google_service_account.apply.name
+resource "google_service_account_iam_member" "github_control" {
+  service_account_id = google_service_account.control.name
   role               = "roles/iam.workloadIdentityUser"
   member             = local.github_apply_principal
+}
+
+resource "google_service_account" "control" {
+  project      = var.control_project_id
+  account_id   = "billing-guard-control"
+  display_name = "FinOps control-plane apply only"
+}
+
+resource "google_service_account" "budget" {
+  for_each     = var.billing_account_ids
+  project      = var.control_project_id
+  account_id   = "finops-budget-${substr(sha256(each.value), 0, 12)}"
+  display_name = "FinOps budget writer ${each.value}"
+}
+
+resource "google_service_account_iam_member" "github_budget" {
+  for_each           = var.billing_account_ids
+  service_account_id = google_service_account.budget[each.value].name
+  role               = "roles/iam.workloadIdentityUser"
+  member             = local.github_apply_principal
+}
+
+resource "google_storage_bucket_iam_member" "control_state" {
+  bucket = google_storage_bucket.state.name
+  role   = "roles/storage.objectUser"
+  member = "serviceAccount:${google_service_account.control.email}"
+  condition {
+    title      = "control_state_only"
+    expression = "resource.name.startsWith('projects/_/buckets/${var.state_bucket_name}/objects/control-plane/')"
+  }
+}
+
+resource "google_storage_bucket_iam_member" "budget_state" {
+  for_each = var.billing_account_ids
+  bucket   = google_storage_bucket.state.name
+  role     = "roles/storage.objectUser"
+  member   = "serviceAccount:${google_service_account.budget[each.value].email}"
+  condition {
+    title      = "billing_account_state_only"
+    expression = "resource.name.startsWith('projects/_/buckets/${var.state_bucket_name}/objects/billing-accounts/${each.value}/')"
+  }
 }

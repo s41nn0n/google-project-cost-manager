@@ -3,6 +3,7 @@ package discovery
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 )
 
@@ -82,6 +83,39 @@ func Scan(ctx context.Context, organization string, policy ReviewedPolicy, clien
 		}
 		if !link.BillingEnabled || link.BillingAccountName == "" {
 			entry.Classification, entry.Reason = ClassUnbilled, "project has no active billing link"
+			// Budget ownership survives billing unlink. Never invent a billing link:
+			// retain only a unique, exactly matching canonical budget separately.
+			accountNames := make([]string, 0, len(budgets))
+			for name := range budgets {
+				accountNames = append(accountNames, name)
+			}
+			sort.Strings(accountNames)
+			for _, name := range accountNames {
+				candidates := budgets[name]
+				account := policy.BillingAccounts[name]
+				candidate := entry
+				candidate.MonthlyAmount = account.DefaultMonthlyAmount
+				if override := account.ProjectOverrides[project.ProjectID]; override > 0 {
+					candidate.MonthlyAmount = override
+				}
+				candidate.CurrencyCode = account.CurrencyCode
+				candidate.CanonicalDisplayName = "billing-guard-" + project.ProjectID
+				for _, budget := range compatibleBudgets(budgetsForProject(candidates, project.ProjectNumber), candidate, policy) {
+					if entry.ImportCandidate != "" {
+						entry.Classification, entry.Reason = ClassBlocked, "ambiguous retained guard budgets"
+						result.Coverage.Complete = false
+						result.Diagnostics = append(result.Diagnostics, Diagnostic{Code: "ambiguous_retained_budget", Severity: "error", ProjectID: project.ProjectID, Message: entry.Reason})
+						continue
+					}
+					entry.MonthlyAmount, entry.CurrencyCode = candidate.MonthlyAmount, candidate.CurrencyCode
+					entry.CanonicalDisplayName, entry.ImportCandidate = candidate.CanonicalDisplayName, budget.Name
+					entry.BudgetAccountName, entry.BudgetClassification = name, "retained_unbilled"
+					entry.ExistingBudgets = []ExistingBudget{budget}
+				}
+			}
+			if entry.Classification == ClassUnbilled && entry.ImportCandidate != "" {
+				result.Imports = append(result.Imports, ImportCandidate{BillingAccountName: entry.BudgetAccountName, ProjectID: project.ProjectID, TerraformAddress: fmt.Sprintf("module.billing_account[%q].google_billing_budget.project[%q]", entry.BudgetAccountName, project.ProjectID), RemoteID: entry.ImportCandidate})
+			}
 			result.addProject(entry)
 			continue
 		}

@@ -30,7 +30,7 @@ func rewriteMessage(t *testing.T, body []byte, id string, published time.Time) [
 func TestDuplicateAndOutOfOrderDeliveriesDoNotDisableTwice(t *testing.T) {
 	cfg := organizationConfig(t, "live")
 	client := &trackingBilling{info: billing.ProjectBillingInfo{BillingEnabled: true, BillingAccountName: "billingAccounts/AAA"}}
-	server, err := NewServer(Options{Billing: client, EventStore: &eventstate.MemoryStore{}, LoadConfig: func(context.Context) (*config.Config, error) { return cfg, nil }})
+	server, err := NewServer(Options{ReadinessCheck: testReady, Billing: client, EventStore: &eventstate.MemoryStore{}, LoadConfig: func(context.Context) (*config.Config, error) { return cfg, nil }})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -50,7 +50,7 @@ func TestDuplicateAndOutOfOrderDeliveriesDoNotDisableTwice(t *testing.T) {
 		t.Fatalf("duplicate calls=%d body=%s", client.disableCalls, response.Body.String())
 	}
 
-	older := rewriteMessage(t, organizationPush(t, map[string]any{"costAmount": 79.0}), "older", published.Add(-time.Minute))
+	older := rewriteMessage(t, organizationPush(t, map[string]any{"costAmount": 80.0}), "older", published.Add(-time.Minute))
 	response = httptest.NewRecorder()
 	server.Router().ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/pubsub/billing-alert", bytes.NewReader(older)))
 	if client.disableCalls != 1 || !bytes.Contains(response.Body.Bytes(), []byte("out_of_order_event")) {

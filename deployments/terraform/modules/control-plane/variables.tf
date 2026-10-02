@@ -43,6 +43,10 @@ variable "self_test_schedule" {
 }
 
 variable "notification_channels" {
-  type    = list(string)
-  default = []
+  type        = list(string)
+  description = "Verified operator notification channel resource names; at least one is required."
+  validation {
+    condition     = length(var.notification_channels) > 0
+    error_message = "Configure and verify a real operator notification channel before deploying."
+  }
 }

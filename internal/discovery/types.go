@@ -155,6 +155,7 @@ type ProjectInventory struct {
 	CanonicalDisplayName string           `json:"canonicalDisplayName,omitempty" yaml:"canonicalDisplayName,omitempty"`
 	ImportCandidate      string           `json:"importCandidate,omitempty" yaml:"importCandidate,omitempty"`
 	BudgetClassification string           `json:"budgetClassification,omitempty" yaml:"budgetClassification,omitempty"`
+	BudgetAccountName    string           `json:"budgetAccountName,omitempty" yaml:"budgetAccountName,omitempty"`
 	ExistingBudgets      []ExistingBudget `json:"existingBudgets,omitempty" yaml:"existingBudgets,omitempty"`
 }
 

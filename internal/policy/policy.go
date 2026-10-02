@@ -1,8 +1,10 @@
 package policy
 
 import (
+	"math"
 	"strings"
 	"time"
+	_ "time/tzdata" // Budget calendars use Pacific time; distroless has no zoneinfo.
 
 	"github.com/example/google-project-cost-manager/internal/config"
 	"github.com/example/google-project-cost-manager/internal/pubsub"
@@ -28,6 +30,9 @@ type Evaluation struct {
 
 func Evaluate(c *config.Config, alert pubsub.BudgetAlert) Evaluation {
 	ratio := alert.Ratio()
+	if c.SchemaVersion >= 2 && alert.BudgetAmount > 0 {
+		ratio = alert.CostAmount / alert.BudgetAmount
+	}
 	budget, matched := matchBudget(c, alert)
 	if !matched {
 		return unknown(c, ratio)
@@ -38,13 +43,14 @@ func Evaluate(c *config.Config, alert pubsub.BudgetAlert) Evaluation {
 	}
 	dry := *c.Defaults.DryRun
 	if budget.DryRun != nil {
-		dry = *budget.DryRun
+		dry = dry || *budget.DryRun
 	}
 	if budget.EnforcementMode != "" {
-		dry = budget.EnforcementMode != "live"
+		dry = dry || budget.EnforcementMode != "live"
 	}
+	dry = dry || !c.EnforcementEnabled || c.SchemaVersion < 2
 	action := c.Defaults.Action
-	if budget.Action != "" {
+	if budget.Action != "" && action == "disable_billing" {
 		action = budget.Action
 	}
 	projects := budget.Projects
@@ -54,6 +60,7 @@ func Evaluate(c *config.Config, alert pubsub.BudgetAlert) Evaluation {
 	out := Evaluation{}
 	disabledCount := 0
 	protected := set(c.ProtectedProjects)
+	protected[c.ControlProjectID] = true
 	for _, projectID := range projects {
 		matchedName := firstNonEmpty(budget.Names)
 		if budget.BudgetResourceName != "" {
@@ -62,9 +69,9 @@ func Evaluate(c *config.Config, alert pubsub.BudgetAlert) Evaluation {
 		decision := Decision{ProjectID: projectID, ProjectNumber: budget.ProjectNumber, MatchedBudget: matchedName, ExpectedBillingAccount: budget.BillingAccountName, Ratio: ratio, Threshold: threshold, DryRun: dry, Action: action}
 		if projectPolicy, ok := c.Projects[projectID]; ok {
 			if projectPolicy.DryRun != nil {
-				decision.DryRun = *projectPolicy.DryRun
+				decision.DryRun = decision.DryRun || *projectPolicy.DryRun
 			}
-			if projectPolicy.Action != "" {
+			if projectPolicy.Action != "" && decision.Action == "disable_billing" {
 				decision.Action = projectPolicy.Action
 			}
 		}
@@ -78,6 +85,10 @@ func Evaluate(c *config.Config, alert pubsub.BudgetAlert) Evaluation {
 			decision.Reason = "forecast_only"
 		case c.SchemaVersion >= 2 && alert.AlertThresholdExceeded == 0:
 			decision.Reason = "malformed_actual_spend_event"
+		case c.SchemaVersion >= 2 && (alert.BudgetAmount <= 0 || alert.CostAmount < 0 || math.IsNaN(alert.CostAmount) || math.IsInf(alert.CostAmount, 0)):
+			decision.Reason = "malformed_actual_spend_event"
+		case c.SchemaVersion >= 2 && budget.MonthlyAmount > 0 && (math.Abs(alert.BudgetAmount-budget.MonthlyAmount) > 0.000001 || alert.CurrencyCode != budget.CurrencyCode):
+			decision.Reason = "budget_amount_or_currency_mismatch"
 		case c.SchemaVersion >= 2 && stalePeriod(alert, time.Now().UTC()):
 			decision.Reason = "stale_period"
 		case ratio < threshold:
@@ -126,10 +137,21 @@ func stalePeriod(alert pubsub.BudgetAlert, now time.Time) bool {
 	if err != nil {
 		return true
 	}
-	return start.UTC().Year() != now.Year() || start.UTC().Month() != now.Month() || start.UTC().Day() != 1
+	// Google sends e.g. 2021-02-01T08:00:00Z, not UTC midnight.
+	// Use the Pacific calendar at month boundaries and accept its UTC offsets.
+	loc, err := time.LoadLocation("America/Los_Angeles")
+	if err != nil {
+		return true
+	}
+	current := now.In(loc)
+	utc := start.UTC()
+	return utc.Year() != current.Year() || utc.Month() != current.Month() || utc.Day() != 1 || (utc.Hour() != 0 && utc.Hour() != 7 && utc.Hour() != 8) || utc.Minute() != 0 || utc.Second() != 0
 }
 
 func unknown(c *config.Config, ratio float64) Evaluation {
+	if c.SchemaVersion >= 2 || !c.EnforcementEnabled {
+		return Evaluation{Unknown: true, Decisions: []Decision{{Ratio: ratio, DryRun: true, Action: "ignore", Reason: "unknown_alert_ignored"}}}
+	}
 	projects := c.UnknownAlertProjects
 	if len(projects) == 0 {
 		decision := Decision{Ratio: ratio, Threshold: c.Defaults.Threshold, Action: c.UnknownAlertPolicy}
