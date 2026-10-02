@@ -3,6 +3,8 @@ requiredPubSubTopic: projects/replace-control-project/topics/billing-budget-aler
 enforcementMode: dry_run
 enforcementThreshold: 0.8
 billingAccounts:
+  # Include every open account, plus closed accounts needed for active billing
+  # links or retained guard budgets. Unused closed accounts stay inventory-only.
   billingAccounts/000000-000000-000000:
     defaultMonthlyAmount: 1000
     currencyCode: USD

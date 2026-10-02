@@ -21,7 +21,9 @@ Grant discovery/plan read access plus conditioned .tflock writes. Budget writers
 
 ## Reviewed policy
 
-Start with [the example](../examples/private-deployment/policy/reviewed.example.yaml). Every discovered billing account needs a positive `defaultMonthlyAmount`; project overrides are optional. The control project is automatically protected. Every additional protected project requires an explicit ID and non-empty reason.
+Start with [the example](../examples/private-deployment/policy/reviewed.example.yaml). Every open billing account needs a positive `defaultMonthlyAmount` in its actual currency, even when no projects currently use it; project overrides are optional. The control project is automatically protected. Every additional protected project requires an explicit ID and non-empty reason.
+
+Closed accounts remain in inventory, with full budget visibility still required, but may be omitted from reviewed policy when no active billed project or retained canonical guard budget requires them. Unrelated closed-account budgets remain externally owned; discovery does not reopen accounts or manage those budgets. If an unbilled project's canonical budget is present without a reviewed account default, discovery blocks rather than silently dropping it or inferring an amount. A canonical name alone does not qualify a budget for import: all existing exact-match checks still apply. Reopening an unconfigured account requires a reviewed default before rollout can proceed.
 
 Discovery assigns exactly one class:
 

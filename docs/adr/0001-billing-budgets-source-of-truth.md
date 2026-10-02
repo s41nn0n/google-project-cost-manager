@@ -20,5 +20,6 @@ Managed budget resources use both Terraform `prevent_destroy` and provider `dele
 
 - Live alerts can be matched by billing-account and budget resource IDs rather than display name.
 - Existing unrelated budgets remain untouched and visible in inventory.
+- Closed accounts remain visible and require full read visibility, but need a reviewed default only when an active billing link or retained canonical guard requires one. Open accounts always require reviewed defaults, including after reopening. Canonical names can block unsafe omissions but never prove ownership or justify adoption.
 - New projects produce a narrow reviewed change: one budget, billing-control IAM, and generated policy.
 - Adoption is intentionally strict; operators resolve any planned drift before import.

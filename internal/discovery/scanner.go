@@ -37,8 +37,11 @@ func Scan(ctx context.Context, organization string, policy ReviewedPolicy, clien
 	inaccessibleAccounts := map[string]bool{}
 	for _, account := range accounts {
 		accountSet[account.Name] = true
-		if configured, ok := policy.BillingAccounts[account.Name]; !ok || configured.DefaultMonthlyAmount <= 0 {
-			result.Diagnostics = append(result.Diagnostics, Diagnostic{Code: "missing_default_amount", Severity: "error", BillingAccount: account.Name, Message: "every discovered billing account requires a positive defaultMonthlyAmount"})
+		accountPolicy, configured := policy.BillingAccounts[account.Name]
+		// Closed accounts remain visible, but need no invented financial policy
+		// unless an active billing link or retained guard budget requires one.
+		if account.Open && (!configured || accountPolicy.DefaultMonthlyAmount <= 0) {
+			result.Diagnostics = append(result.Diagnostics, Diagnostic{Code: "missing_default_amount", Severity: "error", BillingAccount: account.Name, Message: "every open billing account requires a positive defaultMonthlyAmount"})
 			result.Coverage.Complete = false
 		}
 		listed, listErr := client.ListBudgets(ctx, account.Name)
@@ -92,7 +95,18 @@ func Scan(ctx context.Context, organization string, policy ReviewedPolicy, clien
 			sort.Strings(accountNames)
 			for _, name := range accountNames {
 				candidates := budgets[name]
-				account := policy.BillingAccounts[name]
+				account, configured := policy.BillingAccounts[name]
+				if !configured || account.DefaultMonthlyAmount <= 0 {
+					// A canonical name is not proof of ownership or safe adoption.
+					// It does require review before omitting a potentially retained
+					// guard budget; never infer a default from the remote amount.
+					if hasCanonicalBudget(candidates, project.ProjectID) {
+						entry.Classification, entry.Reason = ClassBlocked, "retained canonical guard budget requires a positive reviewed default monthly amount"
+						result.Coverage.Complete = false
+						result.Diagnostics = append(result.Diagnostics, Diagnostic{Code: "missing_default_amount", Severity: "error", ProjectID: project.ProjectID, BillingAccount: name, Message: entry.Reason})
+					}
+					continue
+				}
 				candidate := entry
 				candidate.MonthlyAmount = account.DefaultMonthlyAmount
 				if override := account.ProjectOverrides[project.ProjectID]; override > 0 {
@@ -186,6 +200,15 @@ func (r *Result) addProject(project ProjectInventory) {
 	r.Inventory.Projects = append(r.Inventory.Projects, project)
 	r.Coverage.TotalProjects++
 	r.Coverage.Classifications[project.Classification]++
+}
+
+func hasCanonicalBudget(budgets []ExistingBudget, projectID string) bool {
+	for _, budget := range budgets {
+		if budget.DisplayName == "billing-guard-"+projectID {
+			return true
+		}
+	}
+	return false
 }
 
 func budgetsForProject(all []ExistingBudget, projectNumber string) []ExistingBudget {

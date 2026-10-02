@@ -73,7 +73,7 @@ func TestScanBlocksMissingVisibilityAndDefaults(t *testing.T) {
 	// Validation allows the scanner to report a discovered account missing its reviewed default.
 	fake := fakeClient{
 		projects: []Project{{ProjectID: "p1", ProjectNumber: "1", LifecycleState: "ACTIVE"}},
-		accounts: []BillingAccount{{Name: "billingAccounts/A"}},
+		accounts: []BillingAccount{{Name: "billingAccounts/A", Open: true}},
 		links:    map[string]BillingLink{"p1": {BillingEnabled: true, BillingAccountName: "billingAccounts/A"}},
 		budgets:  map[string][]ExistingBudget{}, linkErr: map[string]error{}, budgetErr: map[string]error{},
 	}
