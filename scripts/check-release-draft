@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+: "${RELEASE_TAG:?release tag required}"
+: "${RELEASE_SHA:?release SHA required}"
+: "${GITHUB_REPOSITORY:?repository required}"
+# No updates to already-published releases or drafts for a different commit.
+gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json isDraft,targetCommitish |
+  jq -e --arg sha "$RELEASE_SHA" '.isDraft == true and .targetCommitish == $sha' >/dev/null

@@ -16,6 +16,44 @@ This public repository contains no organization IDs, project IDs, billing-accoun
 
 Terraform 1.12 or newer is required. The public modules require Google provider 8.5.0 or newer within major version 8; all committed lock files use the tested 8.5.0 release. Production consumers should pin this repository by release commit and deploy the image by digest.
 
+## Releases and private version pins
+
+Release Please maintains the version PR. After its reviewed merge, it creates a
+draft and directly calls the artifact workflow; a release created with the
+default `GITHUB_TOKEN` does not trigger a separate `release: published` workflow.
+See [Release Please's token guidance](https://github.com/googleapis/release-please-action#github-credentials).
+No PAT or access-monitor App permissions are needed.
+
+Artifacts are built from the exact trusted main commit, not a draft tag. The
+workflow tests/scans source and operator binaries, scans the exact container
+before pushing it, and attests both. Publication waits for both artifact jobs.
+Operator tools retain symbols for accurate binary vulnerability checks; stripped
+binaries cause [govulncheck to fall back to module-level findings](https://pkg.go.dev/golang.org/x/vuln/cmd/govulncheck).
+The release includes five Linux/amd64 tools, `SOURCE_COMMIT`, `SHA256SUMS`, and an
+`IMAGE_DIGEST` reference; the notes also record the source commit and image digest.
+Retry failed jobs on the original run if interrupted. Existing draft assets are
+reused only when their bytes match, never overwritten. A mismatch or source SHA
+different from the original workflow requires explicit operator investigation.
+
+Before publishing the next version, enable immutable releases in this public
+repository's Settings > General > Releases. This locks version tags/assets after
+publication, so all assets must be attached to the draft first. Enabling it does
+not retroactively lock older releases. See [GitHub's immutable releases guide](https://docs.github.com/en/code-security/concepts/supply-chain-security/immutable-releases).
+Verify a candidate using:
+
+```sh
+gh api "repos/$FRAMEWORK_REPO/releases/tags/$FRAMEWORK_VERSION" \
+  --jq '{tag_name, target_commitish, immutable, assets: [.assets[].name]}'
+```
+
+Keep full commit pins until the required fixes are in a published release with
+successful artifact jobs. Use `?ref=vX.Y.Z` for Terraform and the same version in
+private workflow checkouts only after verifying `immutable: true`, the expected
+source commit, assets, and attestations; use the recorded digest for the image.
+Never replace or retag an existing version. `v1.0.0` predates the closed-account
+scanner and artifact-publishing fixes; consumers needing those fixes must wait
+for a newer release or use the exact fixed commit.
+
 ## Discovery
 
 Authenticate as a read-only identity with organization Cloud Asset search, billing-account list, project billing-info read, project metadata read, and budget list/get permissions. Then run:
@@ -35,7 +73,9 @@ Outputs are deterministic and contain no timestamps:
 - `terraform.auto.tfvars.json`: module input derived from reviewed policy and inventory.
 - `diagnostics.json`: machine-readable visibility, amount, and ambiguity failures.
 
-The command exits nonzero for incomplete visibility, inaccessible accounts, missing defaults affecting active projects, or ambiguous exact matches. Existing non-matching budgets are left alone; the module creates `billing-guard-<project-id>` alongside them after review.
+Every open billing account requires a positive reviewed `defaultMonthlyAmount`, even if it currently has no billed projects. Closed accounts remain visible in inventory and their budgets are still inspected, but unused closed accounts may be omitted from reviewed policy and generated Terraform inputs. A closed account still needs a reviewed default if an active billed project or a potentially retained canonical guard budget depends on it. Reopening an unconfigured account blocks discovery until its financial policy is reviewed.
+
+The command exits nonzero for incomplete visibility, inaccessible accounts (including closed accounts), missing required defaults, or ambiguous exact matches. Existing non-matching budgets are left alone; the module creates `billing-guard-<project-id>` alongside them after review. A canonical name alone never authorizes adoption or supplies a budget amount; it only prevents silently excluding a potentially retained guard when its account policy is missing.
 
 ## Runtime safety contract
 

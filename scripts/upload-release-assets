@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# A failed-job retry may find partially uploaded draft assets. Reuse only exact
+# bytes; never clobber an existing asset or modify a published release.
+bash scripts/check-release-draft
+finops_asset_temp=$(mktemp /tmp/finops-release-asset.XXXXXX)
+trap 'rm -f "$finops_asset_temp"' EXIT
+for file in "$@"; do
+  test -f "$file"
+  asset_name=$(basename "$file")
+  release_json=$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json assets)
+  if jq -e --arg name "$asset_name" 'any(.assets[]; .name == $name)' <<< "$release_json" >/dev/null; then
+    gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --pattern "$asset_name" --output - > "$finops_asset_temp"
+    if ! cmp -s "$file" "$finops_asset_temp"; then
+      printf 'Refusing to overwrite differing release asset: %s\n' "$asset_name" >&2
+      exit 1
+    fi
+  else
+    bash scripts/check-release-draft
+    gh release upload "$RELEASE_TAG" "$file" --repo "$GITHUB_REPOSITORY"
+  fi
+done

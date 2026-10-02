@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Keep attested source equal to the workflow's trusted main commit. A draft has
+# no tag yet, so artifact checkouts must use its exact SHA, not its version tag.
+: "${RELEASE_TAG:?release tag required}"
+: "${RELEASE_SHA:?release SHA required}"
+: "${GITHUB_SHA:?workflow SHA required}"
+: "${GITHUB_REF:?workflow ref required}"
+release_error() { printf '%s\n' "$1" >&2; exit 1; }
+[[ "$RELEASE_TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || release_error 'Expected a stable vX.Y.Z release tag'
+[[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]] || release_error 'Expected a full release commit SHA'
+[[ "$GITHUB_REF" == refs/heads/main ]] || release_error 'Releases must run from trusted main'
+[[ "$RELEASE_SHA" == "$GITHUB_SHA" ]] || release_error 'Release SHA differs from the original workflow SHA; investigate rather than attest different source'
+[[ "$(git rev-parse HEAD)" == "$RELEASE_SHA" ]] || release_error 'Checkout differs from the release SHA'
+jq -e --arg version "${RELEASE_TAG#v}" '.["."] == $version' .release-please-manifest.json >/dev/null || release_error 'Release tag differs from the reviewed manifest version'

@@ -1,69 +1,178 @@
 name: Release artifacts
 
+# GITHUB_TOKEN-created releases do not trigger release: published workflows.
+# Release Please calls this workflow directly with the draft's exact source SHA.
 on:
-  release:
-    types: [published]
+  workflow_call:
+    inputs:
+      tag:
+        required: true
+        type: string
+      sha:
+        required: true
+        type: string
 
 permissions:
-  contents: write
-  packages: write
-  id-token: write
-  attestations: write
+  contents: read
+
+env:
+  RELEASE_TAG: ${{ inputs.tag }}
+  RELEASE_SHA: ${{ inputs.sha }}
 
 jobs:
-  scanner:
+  verify:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
+          ref: ${{ inputs.sha }}
           persist-credentials: false
+      - name: Verify trusted release source
+        run: bash scripts/check-release-source
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
         with:
           go-version: '1.26.8'
           cache: true
-      - name: Build operator tools
+      - name: Verify source
         run: |
-          mkdir -p dist
-          for tool in discover plancheck readiness enforcement verify-rollout; do
-            CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags='-s -w' -o "dist/gcp-finops-${tool}_linux_amd64" "./cmd/$tool"
-          done
-          sha256sum dist/gcp-finops-*_linux_amd64 > dist/SHA256SUMS
-      - name: Upload immutable release assets
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
-        run: gh release upload "$RELEASE_TAG" dist/gcp-finops-*_linux_amd64 dist/SHA256SUMS
+          test -z "$(gofmt -l .)"
+          go test -count=1 ./...
+          go vet ./...
+          go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
 
-  image:
+  scanner:
+    needs: verify
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
+          ref: ${{ inputs.sha }}
           persist-credentials: false
+      - name: Verify source and draft before attaching assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          bash scripts/check-release-source
+          bash scripts/check-release-draft
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version: '1.26.8'
+          cache: true
+      - name: Build and scan operator tools
+        run: |
+          mkdir -p dist
+          for tool in discover plancheck readiness enforcement verify-rollout; do
+            binary="dist/gcp-finops-${tool}_linux_amd64"
+            # Keep symbols: govulncheck falls back to broad module findings on stripped binaries.
+            CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o "$binary" "./cmd/$tool"
+            sh scripts/check-binary-vulnerabilities "$binary"
+          done
+          printf '%s\n' "$RELEASE_SHA" > dist/SOURCE_COMMIT
+          sha256sum dist/gcp-finops-*_linux_amd64 dist/SOURCE_COMMIT > dist/SHA256SUMS
+      - name: Attest operator tools
+        uses: actions/attest-build-provenance@96b4a1ef7235a096b17240c259729fdd70c83d45
+        with:
+          subject-path: dist/*
+      - name: Attach assets to draft (never overwrite)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          bash scripts/check-release-draft
+          bash scripts/upload-release-assets dist/gcp-finops-*_linux_amd64 dist/SOURCE_COMMIT dist/SHA256SUMS
+
+  image:
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+      id-token: write
+      attestations: write
+    outputs:
+      digest: ${{ steps.push.outputs.digest }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ inputs.sha }}
+          persist-credentials: false
+      - name: Verify source and draft before building
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          bash scripts/check-release-source
+          bash scripts/check-release-draft
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069
+      - name: Build the image to be scanned and pushed
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc
+        with:
+          context: .
+          load: true
+          push: false
+          provenance: false
+          tags: ghcr.io/${{ github.repository }}:${{ inputs.tag }}
+      - name: Scan image before publishing
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        with:
+          image-ref: ghcr.io/${{ github.repository }}:${{ inputs.tag }}
+          severity: CRITICAL,HIGH
+          ignore-unfixed: false
+          exit-code: '1'
       - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ github.token }}
-      - id: build
-        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc
-        with:
-          context: .
-          push: true
-          tags: ghcr.io/${{ github.repository }}:${{ github.event.release.tag_name }}
+      - name: Push the scanned image (no rebuild)
+        id: push
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IMAGE_REPOSITORY: ghcr.io/${{ github.repository }}
+        run: |
+          bash scripts/check-release-draft
+          image_ref="$IMAGE_REPOSITORY:$RELEASE_TAG"
+          docker push "$image_ref"
+          digest="$(docker image inspect "$image_ref" --format '{{json .RepoDigests}}' | jq -er --arg repo "$IMAGE_REPOSITORY" '.[] | select(startswith($repo + "@sha256:")) | split("@")[1]')"
+          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          printf 'digest=%s\n' "$digest" >> "$GITHUB_OUTPUT"
       - uses: actions/attest-build-provenance@96b4a1ef7235a096b17240c259729fdd70c83d45
         with:
           subject-name: ghcr.io/${{ github.repository }}
-          subject-digest: ${{ steps.build.outputs.digest }}
+          subject-digest: ${{ steps.push.outputs.digest }}
           push-to-registry: true
-      - name: Publish digest on release
+
+  publish:
+    needs: [scanner, image]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ inputs.sha }}
+          persist-credentials: false
+      - name: Publish only after both artifact jobs succeed
         env:
           GH_TOKEN: ${{ github.token }}
-          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          IMAGE_DIGEST: ${{ needs.image.outputs.digest }}
           IMAGE_REPOSITORY: ghcr.io/${{ github.repository }}
         run: |
-          gh release view "$RELEASE_TAG" --json body --jq .body > /tmp/release-notes.md
-          printf '\nContainer: `%s@%s`\n' "$IMAGE_REPOSITORY" "$IMAGE_DIGEST" >> /tmp/release-notes.md
-          gh release edit "$RELEASE_TAG" --notes-file /tmp/release-notes.md
+          bash scripts/check-release-source
+          bash scripts/check-release-draft
+          [[ "$IMAGE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+          gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json assets | jq -e '
+            [.assets[].name] as $assets |
+            ["gcp-finops-discover_linux_amd64", "gcp-finops-plancheck_linux_amd64",
+             "gcp-finops-readiness_linux_amd64", "gcp-finops-enforcement_linux_amd64",
+             "gcp-finops-verify-rollout_linux_amd64", "SOURCE_COMMIT", "SHA256SUMS"] |
+            all(.[]; . as $name | $assets | index($name) != null)'
+          printf '%s@%s\n' "$IMAGE_REPOSITORY" "$IMAGE_DIGEST" > "$RUNNER_TEMP/IMAGE_DIGEST"
+          bash scripts/upload-release-assets "$RUNNER_TEMP/IMAGE_DIGEST"
+          gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json body --jq .body > "$RUNNER_TEMP/release-notes.md"
+          printf '\nSource commit: `%s`\nContainer: `%s@%s`\n' "$RELEASE_SHA" "$IMAGE_REPOSITORY" "$IMAGE_DIGEST" >> "$RUNNER_TEMP/release-notes.md"
+          gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --notes-file "$RUNNER_TEMP/release-notes.md"
+          bash scripts/check-release-draft
+          gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false
