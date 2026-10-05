@@ -43,6 +43,11 @@ func main() {
 		fatal(err)
 	}
 	if !result.Coverage.Complete {
+		for _, diagnostic := range result.Diagnostics {
+			if diagnostic.Severity == "error" {
+				fmt.Fprintf(os.Stderr, "%s: project=%s account=%s: %s\n", diagnostic.Code, diagnostic.ProjectID, diagnostic.BillingAccount, diagnostic.Message)
+			}
+		}
 		fmt.Fprintln(os.Stderr, "discovery completed with blocking diagnostics; see diagnostics.json")
 		os.Exit(1)
 	}

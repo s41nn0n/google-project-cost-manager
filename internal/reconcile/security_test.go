@@ -27,7 +27,7 @@ func TestCanonicalDriftAndMissingPermissionsBlockReadiness(t *testing.T) {
 	if err != nil || r.Summary.Errors != 0 {
 		t.Fatalf("valid canonical: %v %+v", err, r)
 	}
-	for name, mutate := range map[string]func(*Budget){"filter": func(b *Budget) { b.RestrictedFilter = true }, "amount": func(b *Budget) { b.MonthlyAmount = 101 }, "currency": func(b *Budget) { b.CurrencyCode = "EUR" }, "period": func(b *Budget) { b.CalendarPeriod = "YEAR" }, "forecast": func(b *Budget) { b.SpendBases = []string{"CURRENT_SPEND", "FORECASTED_SPEND", "CURRENT_SPEND"} }, "resource": func(b *Budget) { b.Name = "billingAccounts/A/budgets/OTHER" }} {
+	for name, mutate := range map[string]func(*Budget){"spend_cap": func(b *Budget) { b.SpendCap = true }, "filter": func(b *Budget) { b.RestrictedFilter = true }, "amount": func(b *Budget) { b.MonthlyAmount = 101 }, "currency": func(b *Budget) { b.CurrencyCode = "EUR" }, "period": func(b *Budget) { b.CalendarPeriod = "YEAR" }, "forecast": func(b *Budget) { b.SpendBases = []string{"CURRENT_SPEND", "FORECASTED_SPEND", "CURRENT_SPEND"} }, "resource": func(b *Budget) { b.Name = "billingAccounts/A/budgets/OTHER" }} {
 		t.Run(name, func(t *testing.T) {
 			copy := b
 			mutate(&copy)

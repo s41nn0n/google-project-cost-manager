@@ -93,10 +93,26 @@ func (c *GCPClient) GetProjectBilling(ctx context.Context, projectID string) (Bi
 }
 
 func (c *GCPClient) ListBudgets(ctx context.Context, account string) ([]ExistingBudget, error) {
+	first, err := c.listBudgets(ctx, account)
+	if err != nil {
+		return nil, err
+	}
+	second, err := c.listBudgets(ctx, account)
+	if err != nil {
+		return nil, fmt.Errorf("verify budget listing: %w", err)
+	}
+	first, second = standardBudgets(first), standardBudgets(second)
+	if err := compareBudgetSnapshots(first, second); err != nil {
+		return nil, err
+	}
+	return first, nil
+}
+
+func (c *GCPClient) listBudgets(ctx context.Context, account string) ([]ExistingBudget, error) {
 	var out []ExistingBudget
 	err := c.budgets.BillingAccounts.Budgets.List(account).Pages(ctx, func(resp *billingbudgets.GoogleCloudBillingBudgetsV1ListBudgetsResponse) error {
 		for _, budget := range resp.Budgets {
-			item := ExistingBudget{Name: budget.Name, DisplayName: budget.DisplayName, OwnershipScope: budget.OwnershipScope}
+			item := ExistingBudget{Name: budget.Name, DisplayName: budget.DisplayName, OwnershipScope: budget.OwnershipScope, SpendCap: budget.SpendCap != nil}
 			if budget.BudgetFilter != nil {
 				item.Projects = append([]string(nil), budget.BudgetFilter.Projects...)
 				item.CalendarPeriod = budget.BudgetFilter.CalendarPeriod

@@ -67,8 +67,8 @@ go run ./cmd/discover \
 
 Outputs are deterministic and contain no timestamps:
 
-- `inventory.yaml`: normalized accounts, project numbers/states, billing links, classifications, and budget observations.
-- `coverage.json`: counts and the complete/incomplete rollout gate.
+- `inventory.yaml`: normalized accounts, project numbers/states, billing links, classifications, and standard alert-budget observations.
+- `coverage.json`: counts, explicit budget-discovery scope, and the complete/incomplete rollout gate.
 - `imports.json` and `imports.tf`: exact zero-change Terraform adoption candidates.
 - `terraform.auto.tfvars.json`: module input derived from reviewed policy and inventory.
 - `diagnostics.json`: machine-readable visibility, amount, and ambiguity failures.
@@ -76,6 +76,33 @@ Outputs are deterministic and contain no timestamps:
 Every open billing account requires a positive reviewed `defaultMonthlyAmount`, even if it currently has no billed projects. Closed accounts remain visible in inventory and their budgets are still inspected, but unused closed accounts may be omitted from reviewed policy and generated Terraform inputs. A closed account still needs a reviewed default if an active billed project or a potentially retained canonical guard budget depends on it. Reopening an unconfigured account blocks discovery until its financial policy is reviewed.
 
 The command exits nonzero for incomplete visibility, inaccessible accounts (including closed accounts), missing required defaults, or ambiguous exact matches. Existing non-matching budgets are left alone; the module creates `billing-guard-<project-id>` alongside them after review. A canonical name alone never authorizes adoption or supplies a budget amount; it only prevents silently excluding a potentially retained guard when its account policy is missing.
+
+Budget discovery covers **standard alerts-only budgets**. Preview spend caps are
+identified only by the API's explicit `spendCap` field, remain externally managed,
+and never enter imports, generated enforcement policy, or reconciliation matches.
+Their API visibility can be incomplete: both inventory and coverage declare
+`budgetDiscovery.scope: standard_alerts_only` and
+`budgetDiscovery.previewSpendCaps: not_verified`. Absence from an API response
+does not mean that a cap is absent or disabled. The scanner compares two complete
+paginated standard-budget lists and blocks on changed resources or
+adoption-relevant fields; permission failures and project-coverage gaps still
+block. Keep the independent workflow comparisons. See
+[the discovery scope and troubleshooting guide](docs/using-in-your-google-project.md#budget-discovery-scope-and-preview-spend-caps).
+
+## TODO: Spend-cap capabilities
+
+- Add a separately opted-in capability for discovering, reviewing, and eventually
+  managing service-specific spend caps when API/provider support and visibility
+  are reliable; do not make preview caps part of standard-budget completeness.
+- Model project/service scope, spend-cap type and state, gross-cost treatment,
+  overlapping controls, notifications, and the effects on existing workloads.
+- Define separately scoped read/write permissions and explicit adoption and
+  lifecycle rules. Preserve existing externally managed caps by default.
+- Test complete pagination, configured/enforced/lifted states, permission failures,
+  zero-change adoption, and disposable-project behavior. Do not automatically
+  lift caps, restore billing, or replace the current 80% actual-spend path.
+
+This is future work, not an enabled capability. Existing caps remain operator-owned.
 
 ## Runtime safety contract
 

@@ -13,6 +13,9 @@ const (
 	ClassUnbilled  = "unbilled"
 	ClassInactive  = "inactive"
 	ClassBlocked   = "blocked"
+
+	BudgetScopeStandardAlertsOnly        = "standard_alerts_only"
+	PreviewSpendCapVisibilityNotVerified = "not_verified"
 )
 
 type ReviewedPolicy struct {
@@ -116,6 +119,7 @@ type ExistingBudget struct {
 	PubSubTopic            string      `json:"pubsubTopic" yaml:"pubsubTopic"`
 	Thresholds             []Threshold `json:"thresholds" yaml:"thresholds"`
 	Classification         string      `json:"classification" yaml:"classification"`
+	SpendCap               bool        `json:"spendCap,omitempty" yaml:"spendCap,omitempty"`
 }
 
 type Money struct {
@@ -160,11 +164,12 @@ type ProjectInventory struct {
 }
 
 type Inventory struct {
-	SchemaVersion   int                `json:"schemaVersion" yaml:"schemaVersion"`
-	Organization    string             `json:"organization" yaml:"organization"`
-	BillingAccounts []BillingAccount   `json:"billingAccounts" yaml:"billingAccounts"`
-	Projects        []ProjectInventory `json:"projects" yaml:"projects"`
-	Budgets         []ExistingBudget   `json:"budgets" yaml:"budgets"`
+	SchemaVersion   int                     `json:"schemaVersion" yaml:"schemaVersion"`
+	Organization    string                  `json:"organization" yaml:"organization"`
+	BudgetDiscovery BudgetDiscoveryCoverage `json:"budgetDiscovery" yaml:"budgetDiscovery"`
+	BillingAccounts []BillingAccount        `json:"billingAccounts" yaml:"billingAccounts"`
+	Projects        []ProjectInventory      `json:"projects" yaml:"projects"`
+	Budgets         []ExistingBudget        `json:"budgets" yaml:"budgets"`
 }
 
 type ImportCandidate struct {
@@ -183,9 +188,17 @@ type Diagnostic struct {
 }
 
 type Coverage struct {
-	TotalProjects   int            `json:"totalProjects"`
-	Classifications map[string]int `json:"classifications"`
-	Complete        bool           `json:"complete"`
+	TotalProjects   int                     `json:"totalProjects"`
+	Classifications map[string]int          `json:"classifications"`
+	Complete        bool                    `json:"complete"`
+	BudgetDiscovery BudgetDiscoveryCoverage `json:"budgetDiscovery"`
+}
+
+// Complete coverage refers to organization projects and standard alert budgets,
+// never to the intermittently exposed preview spend-cap catalog.
+type BudgetDiscoveryCoverage struct {
+	Scope            string `json:"scope" yaml:"scope"`
+	PreviewSpendCaps string `json:"previewSpendCaps" yaml:"previewSpendCaps"`
 }
 
 type Result struct {
@@ -198,8 +211,14 @@ type Result struct {
 func (r *Result) Normalize() {
 	sort.Slice(r.Inventory.BillingAccounts, func(i, j int) bool { return r.Inventory.BillingAccounts[i].Name < r.Inventory.BillingAccounts[j].Name })
 	sort.Slice(r.Inventory.Projects, func(i, j int) bool { return r.Inventory.Projects[i].ProjectID < r.Inventory.Projects[j].ProjectID })
+	for i := range r.Inventory.Budgets {
+		r.Inventory.Budgets[i] = normalizeBudget(r.Inventory.Budgets[i])
+	}
 	sort.Slice(r.Inventory.Budgets, func(i, j int) bool { return r.Inventory.Budgets[i].Name < r.Inventory.Budgets[j].Name })
 	for i := range r.Inventory.Projects {
+		for j := range r.Inventory.Projects[i].ExistingBudgets {
+			r.Inventory.Projects[i].ExistingBudgets[j] = normalizeBudget(r.Inventory.Projects[i].ExistingBudgets[j])
+		}
 		sort.Slice(r.Inventory.Projects[i].ExistingBudgets, func(a, b int) bool {
 			return r.Inventory.Projects[i].ExistingBudgets[a].Name < r.Inventory.Projects[i].ExistingBudgets[b].Name
 		})

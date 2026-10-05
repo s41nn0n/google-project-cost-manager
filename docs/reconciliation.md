@@ -4,6 +4,12 @@ Reconciliation is read-only. Terraform owns canonical guard budgets; unrelated
 budgets remain externally owned. POST /reconcile is exposed only by the admin
 Cloud Run service. The Pub/Sub identity cannot invoke it or self-test routes.
 
+Reconciliation covers standard alerts-only budgets. The API's explicit
+`spendCap` field marks preview caps, which cannot satisfy a configured guard
+policy or enter reconciliation counts/diffs. The result declares
+`budgetScope: standard_alerts_only`. Preview-cap visibility is not verified;
+their absence from a response does not mean a cap is absent or disabled.
+
 Canonical checks cover exact resource identity, single-project scope, monthly
 amount/currency/credit treatment, current-spend 50/80/100 thresholds, notification
 topic, current billing account, and the runtime's billing-unlink permission.

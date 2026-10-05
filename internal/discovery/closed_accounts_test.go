@@ -33,7 +33,7 @@ func TestScanClosedAccountsRemainInventoryOnlyWithoutDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantCoverage := Coverage{TotalProjects: 4, Complete: true, Classifications: map[string]int{ClassManaged: 1, ClassProtected: 1, ClassUnbilled: 1, ClassInactive: 1}}
+	wantCoverage := Coverage{TotalProjects: 4, Complete: true, Classifications: map[string]int{ClassManaged: 1, ClassProtected: 1, ClassUnbilled: 1, ClassInactive: 1}, BudgetDiscovery: BudgetDiscoveryCoverage{Scope: BudgetScopeStandardAlertsOnly, PreviewSpendCaps: PreviewSpendCapVisibilityNotVerified}}
 	if !reflect.DeepEqual(result.Coverage, wantCoverage) || len(result.Diagnostics) != 0 || len(result.Imports) != 0 {
 		t.Fatalf("unexpected coverage, diagnostics, or imports: %+v", result)
 	}

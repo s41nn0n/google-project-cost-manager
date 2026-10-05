@@ -42,7 +42,7 @@ func (c *CloudBudgetClient) ListBudgets(ctx context.Context, billingAccountName 
 			if b.NotificationsRule != nil {
 				topic = b.NotificationsRule.PubsubTopic
 			}
-			budget := Budget{Name: b.Name, DisplayName: b.DisplayName, Projects: projects, Thresholds: thresholds, PubSubTopic: topic, SpendBases: bases}
+			budget := Budget{Name: b.Name, DisplayName: b.DisplayName, Projects: projects, Thresholds: thresholds, PubSubTopic: topic, SpendBases: bases, SpendCap: b.SpendCap != nil}
 			if b.BudgetFilter != nil {
 				budget.CalendarPeriod = b.BudgetFilter.CalendarPeriod
 				filter := b.BudgetFilter

@@ -60,6 +60,28 @@ budgets:
 	}
 }
 
+func TestRunPreviewCapsCannotSatisfyConfiguredBudgets(t *testing.T) {
+	c := reconcileCfg(t, `reconcile: {enabled: true, billingAccountName: billingAccounts/123, requiredPubSubTopic: projects/core/topics/t}
+budgets:
+- names: [prod]
+  projects: [p1]
+  threshold: 0.8
+`)
+	standard := Budget{Name: "billingAccounts/123/budgets/prod", DisplayName: "prod", Projects: []string{"projects/123"}, Thresholds: []float64{0.8}, PubSubTopic: "projects/core/topics/t"}
+	cap := standard
+	cap.Name = "billingAccounts/123/budgets/cap"
+	cap.SpendCap = true
+	withCap, err := Run(context.Background(), c, fakeLister{standard, cap}, fakeResolver{})
+	if err != nil || withCap.Summary.GCPBudgets != 1 || len(withCap.Diffs) != 0 || withCap.BudgetScope != "standard_alerts_only" {
+		t.Fatalf("preview cap changed standard reconciliation: result=%+v error=%v", withCap, err)
+	}
+	// Even the same display name and policy shape cannot make a cap a guard.
+	onlyCap, err := Run(context.Background(), c, fakeLister{cap}, fakeResolver{})
+	if err != nil || onlyCap.Summary.GCPBudgets != 0 || !hasDiff(onlyCap, "configured_budget_missing_in_gcp") || onlyCap.Summary.Errors != 1 {
+		t.Fatalf("cap satisfied configured policy: result=%+v error=%v", onlyCap, err)
+	}
+}
+
 func TestRunDiffTypes(t *testing.T) {
 	c := reconcileCfg(t, `reconcile: {enabled: true, billingAccountName: billingAccounts/123, requiredPubSubTopic: projects/core/topics/t}
 budgets:

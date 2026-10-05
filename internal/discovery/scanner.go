@@ -2,6 +2,7 @@ package discovery
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -31,7 +32,8 @@ func Scan(ctx context.Context, organization string, policy ReviewedPolicy, clien
 		return Result{}, fmt.Errorf("list organization billing accounts: %w", err)
 	}
 
-	result := Result{Inventory: Inventory{SchemaVersion: 1, Organization: organization, BillingAccounts: accounts}, Coverage: Coverage{Classifications: map[string]int{}, Complete: true}}
+	budgetCoverage := BudgetDiscoveryCoverage{Scope: BudgetScopeStandardAlertsOnly, PreviewSpendCaps: PreviewSpendCapVisibilityNotVerified}
+	result := Result{Inventory: Inventory{SchemaVersion: 1, Organization: organization, BillingAccounts: accounts, BudgetDiscovery: budgetCoverage}, Coverage: Coverage{Classifications: map[string]int{}, Complete: true, BudgetDiscovery: budgetCoverage}}
 	accountSet := map[string]bool{}
 	budgets := map[string][]ExistingBudget{}
 	inaccessibleAccounts := map[string]bool{}
@@ -47,10 +49,15 @@ func Scan(ctx context.Context, organization string, policy ReviewedPolicy, clien
 		listed, listErr := client.ListBudgets(ctx, account.Name)
 		if listErr != nil {
 			inaccessibleAccounts[account.Name] = true
-			result.Diagnostics = append(result.Diagnostics, Diagnostic{Code: "billing_account_inaccessible", Severity: "error", BillingAccount: account.Name, Message: listErr.Error()})
+			code := "billing_account_inaccessible"
+			if errors.Is(listErr, ErrBudgetInventoryUnstable) {
+				code = "budget_inventory_unstable"
+			}
+			result.Diagnostics = append(result.Diagnostics, Diagnostic{Code: code, Severity: "error", BillingAccount: account.Name, Message: listErr.Error()})
 			result.Coverage.Complete = false
 			continue
 		}
+		listed = standardBudgets(listed)
 		for i := range listed {
 			listed[i].Classification = "externally_owned"
 		}
@@ -238,7 +245,7 @@ func compatibleBudgets(candidates []ExistingBudget, project ProjectInventory, po
 		if credits == "" || credits == "CREDIT_TYPES_TREATMENT_UNSPECIFIED" {
 			credits = "INCLUDE_ALL_CREDITS"
 		}
-		if budget.DisplayName != project.CanonicalDisplayName || budget.OwnershipScope != "BILLING_ACCOUNT" || !budget.FilterCompatible || !budget.NotificationCompatible || len(budget.Projects) != 1 || budget.Projects[0] != wantProject || period != "MONTH" || !budget.Amount.Equal(wantMoney) || credits != "INCLUDE_ALL_CREDITS" || budget.PubSubTopic != policy.RequiredPubSubTopic || !exactThresholds(budget.Thresholds) {
+		if budget.SpendCap || budget.DisplayName != project.CanonicalDisplayName || budget.OwnershipScope != "BILLING_ACCOUNT" || !budget.FilterCompatible || !budget.NotificationCompatible || len(budget.Projects) != 1 || budget.Projects[0] != wantProject || period != "MONTH" || !budget.Amount.Equal(wantMoney) || credits != "INCLUDE_ALL_CREDITS" || budget.PubSubTopic != policy.RequiredPubSubTopic || !exactThresholds(budget.Thresholds) {
 			continue
 		}
 		compatible = append(compatible, budget)

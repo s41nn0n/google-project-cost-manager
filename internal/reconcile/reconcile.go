@@ -27,6 +27,7 @@ type Budget struct {
 	CreditTreatment  string
 	SpendBases       []string
 	RestrictedFilter bool
+	SpendCap         bool
 }
 
 type BudgetLister interface {
@@ -66,6 +67,7 @@ type Diff struct {
 type Result struct {
 	SourceOfTruth string  `json:"sourceOfTruth"`
 	Mode          string  `json:"mode"`
+	BudgetScope   string  `json:"budgetScope"`
 	Summary       Summary `json:"summary"`
 	Diffs         []Diff  `json:"diffs"`
 }
@@ -90,9 +92,13 @@ func Run(ctx context.Context, cfg *config.Config, lister BudgetLister, resolver 
 		if err != nil {
 			return Result{}, fmt.Errorf("list budgets for %s: %w", account, err)
 		}
-		budgets = append(budgets, accountBudgets...)
+		for _, budget := range accountBudgets {
+			if !budget.SpendCap {
+				budgets = append(budgets, budget)
+			}
+		}
 	}
-	r := Result{SourceOfTruth: cfg.Reconcile.SourceOfTruth, Mode: cfg.Reconcile.Mode}
+	r := Result{SourceOfTruth: cfg.Reconcile.SourceOfTruth, Mode: cfg.Reconcile.Mode, BudgetScope: "standard_alerts_only"}
 	r.Summary.GCPBudgets = len(budgets)
 	r.Summary.ConfiguredBudgets = len(cfg.Budgets)
 

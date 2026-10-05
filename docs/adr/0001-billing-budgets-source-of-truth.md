@@ -12,6 +12,15 @@ Organization-wide enforcement needs a deterministic one-to-one binding among a p
 
 Terraform owns exactly one canonical guard budget for each `managed` active billed project. Its default display name is `billing-guard-<project-id>` and its generated resource name is the live enforcement identity. Terraform does not own unrelated budgets.
 
+Canonical guards are standard alerts-only budgets. Preview spend-cap budgets are
+outside the managed surface and are identified only by the API's explicit
+`spendCap` field, never their name or monetary amount. Their intermittent
+visibility must not prevent complete standard-budget and organization-project
+coverage. They do not enter adoption, retained guard budgets, generated policy,
+or reconciliation matches. Inventory and coverage explicitly scope their budget
+completeness claim to standard alerts-only budgets; preview-cap visibility is
+not verified. No claim is made that a cap omitted by the API is absent or disabled.
+
 An existing budget is eligible for adoption only when account, canonical display name, single-project scope, monthly period, specified amount/currency, credit treatment, Pub/Sub topic, and the 50/80/100 current-spend rules match exactly. Generated import blocks must plan with zero remote changes. No candidate creates a new canonical budget; multiple candidates block rollout.
 
 Managed budget resources use both Terraform `prevent_destroy` and provider `deletion_policy = "ABANDON"`. The apply identity must be granted create/get/list/update but not budget delete permission. Removing a budget from configuration therefore cannot delete the remote guard budget.
@@ -19,7 +28,9 @@ Managed budget resources use both Terraform `prevent_destroy` and provider `dele
 ## Consequences
 
 - Live alerts can be matched by billing-account and budget resource IDs rather than display name.
-- Existing unrelated budgets remain untouched and visible in inventory.
+- Existing unrelated standard budgets remain untouched and visible in inventory.
+  Preview caps remain untouched and externally managed, outside the deterministic
+  catalog; future support is a separately reviewed capability, not a new IAM grant.
 - Closed accounts remain visible and require full read visibility, but need a reviewed default only when an active billing link or retained canonical guard requires one. Open accounts always require reviewed defaults, including after reopening. Canonical names can block unsafe omissions but never prove ownership or justify adoption.
 - New projects produce a narrow reviewed change: one budget, billing-control IAM, and generated policy.
 - Adoption is intentionally strict; operators resolve any planned drift before import.
