@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.2](https://github.com/s41nn0n/google-project-cost-manager/compare/v1.0.1...v1.0.2) (2026-10-05)
+
+
+### Bug Fixes
+
+* scope guard budget discovery to standard alert budgets ([6d2cbc3](https://github.com/s41nn0n/google-project-cost-manager/commit/6d2cbc3ebea7bc2e65b0fbad247c3c52676daa6e))
+
 ## [1.0.1](https://github.com/s41nn0n/google-project-cost-manager/compare/v1.0.0...v1.0.1) (2026-10-02)
 
 
