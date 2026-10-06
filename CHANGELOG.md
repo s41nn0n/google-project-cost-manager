@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.0.4](https://github.com/s41nn0n/google-project-cost-manager/compare/v1.0.3...v1.0.4) (2026-10-06)
+
+
+### Bug Fixes
+
+* export canonical budget resource IDs ([cfb9a3a](https://github.com/s41nn0n/google-project-cost-manager/commit/cfb9a3a21cda439e11d7d2632ff3b6bce2353a02))
+* guard budget writes and document administrator initialization ([d49a4c3](https://github.com/s41nn0n/google-project-cost-manager/commit/d49a4c39bc602a9369ac8c381c7bb0322e5e2315))
+
 ## [1.0.3](https://github.com/s41nn0n/google-project-cost-manager/compare/v1.0.2...v1.0.3) (2026-10-06)
 
 
