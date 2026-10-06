@@ -18,6 +18,16 @@ Terraform 1.12 or newer is required. The public modules require Google provider 
 
 ## Releases and private version pins
 
+`v1.0.2` has a control-plane rollout blocker: its budget publisher IAM member
+uses the nonexistent `billing-budget-alerts@system.gserviceaccount.com`. The
+correct [Google-managed identity](https://docs.cloud.google.com/organization-policy/restrict-domains)
+is `billing-budget-alert@system.gserviceaccount.com`; the topic name remains
+`billing-budget-alerts`. Use a published release containing the correction in
+both the Terraform module and scoped plan checker before deploying or retrying.
+Do not retag v1.0.2, edit cached modules, broaden IAM, delete partial resources,
+or reuse a failed apply's saved plan. Recovery instructions belong in the private
+deployment runbook.
+
 Release Please maintains the version PR. After its reviewed merge, it creates a
 draft and directly calls the artifact workflow; a release created with the
 default `GITHUB_TOKEN` does not trigger a separate `release: published` workflow.

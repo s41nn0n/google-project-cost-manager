@@ -2,7 +2,9 @@ resource "google_pubsub_topic_iam_member" "billing_budget_publisher" {
   project = var.control_project_id
   topic   = google_pubsub_topic.billing_alerts.name
   role    = "roles/pubsub.publisher"
-  member  = "serviceAccount:billing-budget-alerts@system.gserviceaccount.com"
+  # Google's publisher identity is singular; the topic name stays plural.
+  # https://docs.cloud.google.com/organization-policy/restrict-domains
+  member = "serviceAccount:billing-budget-alert@system.gserviceaccount.com"
 }
 
 resource "google_pubsub_topic_iam_member" "dead_letter_forwarder" {

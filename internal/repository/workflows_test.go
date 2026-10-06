@@ -36,6 +36,27 @@ func TestTerraformProviderLockIsCommittedAtRoot(t *testing.T) {
 	}
 }
 
+func TestTerraformCIRunsControlPublisherContract(t *testing.T) {
+	data, err := os.ReadFile("../../.github/workflows/ci.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var workflow struct {
+		Jobs map[string]struct {
+			Steps []struct{ Run string }
+		}
+	}
+	if err := yaml.Unmarshal(data, &workflow); err != nil {
+		t.Fatal(err)
+	}
+	for _, step := range workflow.Jobs["terraform"].Steps {
+		if strings.TrimSpace(step.Run) == "terraform -chdir=deployments/terraform/modules/control-plane test -no-color" {
+			return
+		}
+	}
+	t.Fatal("Terraform CI must run the credential-free control-plane publisher contract tests")
+}
+
 func TestGoogleProviderVersionContract(t *testing.T) {
 	// Keep standalone modules and the root aligned with the tested major-8 release.
 	constraint := `">= 8.5.0, < 9.0.0"`

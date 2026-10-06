@@ -8,6 +8,10 @@ import (
 	"strings"
 )
 
+// Google owns this identity; it is not a service account in the control project.
+// https://docs.cloud.google.com/organization-policy/restrict-domains
+const billingBudgetPublisher = "serviceAccount:billing-budget-alert@system.gserviceaccount.com"
+
 type Plan struct {
 	ResourceChanges []ResourceChange `json:"resource_changes"`
 	Configuration   struct {
@@ -387,7 +391,7 @@ func validateControl(r ResourceChange, s Scope) error {
 		if r.Type == "google_pubsub_topic_iam_member" {
 			expected := pubsubAgent
 			if resourceName == "billing_budget_publisher" {
-				expected = "serviceAccount:billing-budget-alerts@system.gserviceaccount.com"
+				expected = billingBudgetPublisher
 			}
 			if after["member"] != expected {
 				return fmt.Errorf("wrong topic publisher")
@@ -442,7 +446,7 @@ func validateControl(r ResourceChange, s Scope) error {
 		default:
 			pubsub := "serviceAccount:service-" + s.ControlProjectNumber + "@gcp-sa-pubsub.iam.gserviceaccount.com"
 			scheduler := "serviceAccount:service-" + s.ControlProjectNumber + "@gcp-sa-cloudscheduler.iam.gserviceaccount.com"
-			if s.ControlProjectNumber == "" || (member != "serviceAccount:billing-budget-alerts@system.gserviceaccount.com" && member != pubsub && member != scheduler) {
+			if s.ControlProjectNumber == "" || (member != billingBudgetPublisher && member != pubsub && member != scheduler) {
 				return fmt.Errorf("unexpected Google service agent")
 			}
 			if r.Type == "google_service_account_iam_member" {

@@ -71,3 +71,5 @@ jobs:
           done
       - name: Test budget provider contract without credentials
         run: terraform -chdir=deployments/terraform/modules/billing-account test -no-color
+      - name: Test control-plane publisher contract without credentials
+        run: terraform -chdir=deployments/terraform/modules/control-plane test -no-color

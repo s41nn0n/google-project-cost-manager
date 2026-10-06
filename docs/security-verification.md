@@ -51,6 +51,35 @@ during this upgrade. Unexpected infrastructure deletes or replacements must
 stop the rollout; the documented bootstrap removal of legacy IAM grants is
 intentional and remains an administrator-reviewed step.
 
+## Budget notification publisher correction (2026-10-06)
+
+The v1.0.2 control-plane module and checker repeated an incorrect plural Google
+service-account name. The corrected member is
+`serviceAccount:billing-budget-alert@system.gserviceaccount.com`, as listed in
+[Google's service-identity documentation](https://docs.cloud.google.com/organization-policy/restrict-domains).
+The topic remains `billing-budget-alerts`, and the only grant to this member is
+topic-scoped `roles/pubsub.publisher`. No user-managed service account, new role,
+or organization-policy exemption is introduced.
+
+Independent Go contract tests accept the documented member, reject the old typo,
+wrong topic/project/role, unknown or public members, deletes and replacements,
+and cover completion of a partially created control plane. They also reject
+giving this publisher Cloud Run invoker or service-account token-creator access.
+Three credential-free Terraform mock tests independently check the literal
+publisher identity, separate delivery identities, and the safe empty-budget,
+dry-run bootstrap policy. Both those tests and the six existing budget tests
+pass with Terraform 1.12.2 and 1.16.1 using the locked Google 8.5.0 provider.
+The complete Go suite, race tests, vet, and source reachable-vulnerability check
+also pass. Public CI runs the new control-plane contract tests.
+Mock/schema tests cannot prove an account exists in GCP; the documented identity
+is the external contract, and actual delivery remains a live acceptance check.
+
+Publish a new immutable release before changing private refs. Keep all source
+pins aligned, deploy a freshly scanned digest, refresh module caches without
+provider upgrades, and review a new plan against the original partial state.
+Existing resources must not be removed or replaced just to resume an apply.
+No live apply or publisher IAM change is performed by these code tests.
+
 ## Version-bound binary scan exception
 
 GO-2026-6443 is reported against the linked
