@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.3](https://github.com/s41nn0n/google-project-cost-manager/compare/v1.0.2...v1.0.3) (2026-10-06)
+
+
+### Bug Fixes
+
+* correct Cloud Billing budget publisher identity ([9cbb430](https://github.com/s41nn0n/google-project-cost-manager/commit/9cbb4302b7b85ec3ab73abb7f8dcfabb6ed64448))
+
 ## [1.0.2](https://github.com/s41nn0n/google-project-cost-manager/compare/v1.0.1...v1.0.2) (2026-10-05)
 
 
