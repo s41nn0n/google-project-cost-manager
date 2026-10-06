@@ -136,6 +136,30 @@ owns canonical guards throughout their lifecycle; only the authority used for
 initialization differs. The portable regression suite is
 `sh scripts/test-budget-write-plan` and requires `jq`, not GCP credentials.
 
+### Canonical budget output recovery
+
+With the tested Google provider 8.5.0, `google_billing_budget.name` is a short
+budget UUID, while `.id` is the full `billingAccounts/<account>/budgets/<uuid>`
+resource path. Both `managed_budget_resource_names` and each generated policy's
+`budget_resource_name` must use `.id`. Runtime validation intentionally rejects
+short IDs and IDs belonging to a different billing account, even in dry-run.
+
+For deployments using the affected `v1.0.3` module, keep enforcement disabled
+and do not publish malformed policy outputs. After the correction is available
+in a verified immutable release, update private source pins and refresh
+discovery. Plan against the **existing** account state, run both plan guards,
+and require zero resource adds, changes, replacements, or destroys; only the two
+outputs should change from UUIDs to account-qualified paths. If resources also
+change, stop and review that drift separately.
+
+An explicitly approved output-only apply records the corrected outputs without
+modifying budgets. Verify every output against the corresponding budget's state
+ID, then generate and validate the combined dry-run policy before separately
+approving publication. Do not replace budgets, repeat imports into a new state,
+edit cached modules, retag an existing release, or loosen identity validation to
+work around this bug. The credential-free provider contract test reproduces the
+short-name/full-ID distinction, including retained unbilled budgets.
+
 ## Recovery and warnings
 
 Budget notifications may be delayed, duplicated, or out of order, and 80% cannot guarantee a hard cap. Unlinking billing can stop services and destroy resources. The receiver never relinks billing. Recovery is a deliberate operator action after investigating cost and workload impact.

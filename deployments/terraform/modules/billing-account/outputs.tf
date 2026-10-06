@@ -1,5 +1,6 @@
 output "managed_budget_resource_names" {
-  value = { for id, budget in google_billing_budget.project : id => budget.name }
+  # Google 8 exposes only the budget UUID in name; id is account-qualified.
+  value = { for id, budget in google_billing_budget.project : id => budget.id }
 }
 
 output "coverage_summary" {
@@ -15,7 +16,7 @@ output "enforcement_policy" {
     billing_account_name = var.billing_account_name
     budgets = {
       for id, project in local.owned : id => {
-        budget_resource_name = google_billing_budget.project[id].name
+        budget_resource_name = google_billing_budget.project[id].id
         billing_account_name = var.billing_account_name
         project_id           = id
         project_number       = project.project_number

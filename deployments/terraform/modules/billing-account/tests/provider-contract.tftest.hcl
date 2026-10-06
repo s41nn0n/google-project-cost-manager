@@ -141,3 +141,88 @@ run "reject_other_enforcement_threshold" {
   }
   expect_failures = [var.enforcement_threshold]
 }
+
+run "canonical_resource_names_from_provider_ids" {
+  # Plan-time overrides resolve computed outputs without GCP requests or
+  # mock-apply teardown conflicting with the real prevent_destroy safeguard.
+  # Google 8 returns a short UUID in name, but a canonical resource path in id.
+  command = plan
+  variables {
+    enforcement_mode = "live"
+    projects = {
+      test-workload = {
+        project_number = "123456789012"
+        classification = "managed"
+        monthly_amount = 12.5
+        currency_code  = "EUR"
+      }
+      test-disabled = {
+        project_number       = "123456789013"
+        classification       = "unbilled"
+        budget_resource_name = "billingAccounts/AAAAAA-BBBBBB-CCCCCC/budgets/00000000-0000-0000-0000-000000000002"
+      }
+      test-unbilled = {
+        project_number = "123456789014"
+        classification = "unbilled"
+      }
+      test-control = {
+        project_number   = "123456789015"
+        classification   = "protected"
+        protected_reason = "Test control plane"
+      }
+      test-inactive = {
+        project_number = "123456789016"
+        classification = "inactive"
+      }
+    }
+  }
+  override_resource {
+    target          = google_billing_budget.project["test-workload"]
+    override_during = plan
+    values = {
+      name = "00000000-0000-0000-0000-000000000001"
+      id   = "billingAccounts/AAAAAA-BBBBBB-CCCCCC/budgets/00000000-0000-0000-0000-000000000001"
+    }
+  }
+  override_resource {
+    target          = google_billing_budget.project["test-disabled"]
+    override_during = plan
+    values = {
+      name = "00000000-0000-0000-0000-000000000002"
+      id   = "billingAccounts/AAAAAA-BBBBBB-CCCCCC/budgets/00000000-0000-0000-0000-000000000002"
+    }
+  }
+
+  assert {
+    condition = output.managed_budget_resource_names == {
+      test-workload = "billingAccounts/AAAAAA-BBBBBB-CCCCCC/budgets/00000000-0000-0000-0000-000000000001"
+      test-disabled = "billingAccounts/AAAAAA-BBBBBB-CCCCCC/budgets/00000000-0000-0000-0000-000000000002"
+    }
+    error_message = "Budget resource-name outputs must use canonical provider IDs, not short names, and exclude unowned projects."
+  }
+  assert {
+    condition = (
+      toset(keys(output.enforcement_policy.budgets)) == toset(["test-workload", "test-disabled"]) &&
+      output.enforcement_policy.budgets["test-workload"].budget_resource_name == "billingAccounts/AAAAAA-BBBBBB-CCCCCC/budgets/00000000-0000-0000-0000-000000000001" &&
+      output.enforcement_policy.budgets["test-disabled"].budget_resource_name == "billingAccounts/AAAAAA-BBBBBB-CCCCCC/budgets/00000000-0000-0000-0000-000000000002" &&
+      alltrue([for budget in output.enforcement_policy.budgets : startswith(budget.budget_resource_name, "${budget.billing_account_name}/budgets/")]) &&
+      alltrue([for project_id, budget in output.enforcement_policy.budgets : budget.budget_resource_name != google_billing_budget.project[project_id].name])
+    )
+    error_message = "Generated policy must preserve full account-qualified IDs for both managed and retained unbilled budgets."
+  }
+  assert {
+    condition = (
+      output.enforcement_policy.budgets["test-workload"].enforcement_mode == "live" &&
+      output.enforcement_policy.budgets["test-workload"].monthly_amount == 12.5 &&
+      output.enforcement_policy.budgets["test-workload"].currency_code == "EUR" &&
+      output.enforcement_policy.budgets["test-disabled"].enforcement_mode == "dry_run" &&
+      output.enforcement_policy.budgets["test-disabled"].monthly_amount == 100 &&
+      output.enforcement_policy.budgets["test-disabled"].currency_code == "USD" &&
+      output.enforcement_policy.protected_projects["test-control"] == "Test control plane" &&
+      output.coverage_summary.managed == 1 &&
+      output.coverage_summary.protected == 1 &&
+      output.coverage_summary.total == 5
+    )
+    error_message = "Canonical ID outputs must not change protection, enforcement mode, coverage, or financial settings."
+  }
+}

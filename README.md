@@ -28,6 +28,15 @@ checker. See [budget onboarding](docs/using-in-your-google-project.md#administra
 
 ## Releases and private version pins
 
+`v1.0.3` has a billing-account output bug: Google provider 8 returns a short
+budget UUID in `.name`, not the canonical `billingAccounts/.../budgets/...` path.
+The corrected module uses `.id` for resource-name and policy outputs. Existing
+budgets do not need replacement or re-import. Wait for a published release
+containing this correction before updating private pins; review an output-only
+plan in the existing account state before publishing the generated policy.
+Do not weaken policy validation, edit cached modules, or retag an old release.
+See [canonical output recovery](docs/using-in-your-google-project.md#canonical-budget-output-recovery).
+
 `v1.0.2` has a control-plane rollout blocker: its budget publisher IAM member
 uses the nonexistent `billing-budget-alerts@system.gserviceaccount.com`. The
 correct [Google-managed identity](https://docs.cloud.google.com/organization-policy/restrict-domains)
