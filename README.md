@@ -16,6 +16,16 @@ This public repository contains no organization IDs, project IDs, billing-accoun
 
 Terraform 1.12 or newer is required. The public modules require Google provider 8.5.0 or newer within major version 8; all committed lock files use the tested 8.5.0 release. Production consumers should pin this repository by release commit and deploy the image by digest.
 
+Canonical budget initialization is administrator-owned. Connecting a new budget
+to Pub/Sub requires the caller to have topic IAM-write permission; pregranting
+Google's publisher identity alone does not satisfy that requirement.
+Keep automatic budget writers update-only, without topic IAM authority. Create
+new guards in the existing account state using a reviewed operator plan, then
+regenerate inventory before CI updates or policy publication. The private
+template's `scripts/check-budget-write-plan` blocks creates and notification-rule
+changes before apply; it supplements, never replaces, the pinned scoped plan
+checker. See [budget onboarding](docs/using-in-your-google-project.md#administrator-owned-budget-initialization).
+
 ## Releases and private version pins
 
 `v1.0.2` has a control-plane rollout blocker: its budget publisher IAM member
@@ -127,6 +137,9 @@ After unlink, discovery can retain a uniquely exact guard budget independently o
 The Terraform control plane deploys separate Cloud Run services from the same image using `ROUTE_MODE=receiver|admin`; the Pub/Sub identity cannot invoke reconciliation or self-test routes. Failed deliveries go to a DLQ and monitoring watches both structured safety failures and queued dead letters.
 
 ## Development
+
+The repository tests require `sh` and `jq` for the credential-free private-template
+permission checks, in addition to the Go toolchain.
 
 ```sh
 test -z "$(gofmt -l .)"

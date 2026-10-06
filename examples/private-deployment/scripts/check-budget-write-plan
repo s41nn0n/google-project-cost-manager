@@ -1,0 +1,82 @@
+#!/usr/bin/env sh
+# A permission preflight, not a replacement for the pinned scoped plan checker.
+# Budget writers have no Pub/Sub IAM authority. New budgets and notification-rule
+# changes belong to an explicitly reviewed administrator-owned onboarding step.
+set -eu
+
+mode=require-existing
+case "${1:-}" in
+  --report) mode=report; shift ;;
+  --operator-onboarding) mode=operator-onboarding; shift ;;
+  --*) printf '%s\n' 'unknown budget-write check option' >&2; exit 2 ;;
+esac
+if test "$#" -ne 1; then
+  printf '%s\n' 'usage: check-budget-write-plan [--report|--operator-onboarding] PLAN_JSON' >&2
+  exit 2
+fi
+
+if ! report=$(jq -sce '
+  def unknown:
+    if . == null or . == false then false
+    elif . == true then true
+    elif type == "object" or type == "array" then any(.[]; unknown)
+    else true end;
+  if length != 1 then error("expected exactly one plan") else .[0] end |
+  if type != "object" or (.format_version | type) != "string" or
+     (.format_version | length) == 0 or
+     (.terraform_version | type) != "string" or
+     (.terraform_version | length) == 0 or
+     (.planned_values | type) != "object" or
+     (.resource_changes != null and (.resource_changes | type) != "array")
+  then error("not a complete Terraform JSON plan") else . end |
+  (.resource_changes // []) as $resources |
+  if any($resources[];
+    (.mode != "managed" and .mode != "data") or
+    (.address | type) != "string" or (.type | type) != "string" or
+    (.change.actions | type) != "array" or (.change.actions | length) != 1 or
+    (if .mode == "data" then
+       .change.actions != ["read"] and .change.actions != ["no-op"]
+     else
+       (.change.actions != ["create"] and .change.actions != ["update"] and
+        .change.actions != ["no-op"]) or
+       (.type != "google_billing_budget" and .change.actions != ["no-op"])
+     end))
+  then error("unsupported action or unrelated write in budget state") else . end |
+  [$resources[] | select(.mode == "managed" and .type == "google_billing_budget")] as $budgets |
+  [$budgets[] |
+    if .change.actions == ["create"] then
+      {address, reason:"new_budget"}
+    elif .change.actions == ["update"] and
+      ((.change.before | type) != "object" or
+       (.change.after | type) != "object" or
+       (.change.before.all_updates_rule | type) != "array" or
+       (.change.before.all_updates_rule | length) != 1 or
+       (.change.before.all_updates_rule[0] | type) != "object" or
+       (.change.after.all_updates_rule | type) != "array" or
+       (.change.after.all_updates_rule | length) != 1 or
+       (.change.after.all_updates_rule[0] | type) != "object" or
+       (.change.after_unknown.all_updates_rule | unknown) or
+       .change.before.all_updates_rule != .change.after.all_updates_rule) then
+      {address, reason:"notification_rule_change"}
+    else empty end] | sort_by(.address) as $operator |
+  {requires_operator_onboarding:($operator | length > 0),
+   operator_actions:$operator,
+   budget_creates:([$budgets[] | select(.change.actions == ["create"])] | length),
+   budget_updates:([$budgets[] | select(.change.actions == ["update"])] | length)}
+' "$1"); then
+  printf '%s\n' 'budget permission preflight rejected malformed or unsafe plan' >&2
+  exit 2
+fi
+printf '%s\n' "$report"
+
+if test "$mode" = operator-onboarding; then
+  if ! printf '%s\n' "$report" | jq -e '.budget_updates == 0' >/dev/null; then
+    printf '%s\n' 'operator budget initialization must not update existing budgets; review changes separately' >&2
+    exit 1
+  fi
+elif test "$mode" != report; then
+  if ! printf '%s\n' "$report" | jq -e '.requires_operator_onboarding == false' >/dev/null; then
+    printf '%s\n' 'administrator onboarding required: create/connect budgets using the reviewed account state, then regenerate inventory and re-plan; do not grant Pub/Sub IAM authority to budget writers' >&2
+    exit 1
+  fi
+fi

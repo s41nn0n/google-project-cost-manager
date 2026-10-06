@@ -17,7 +17,7 @@ billing-accounts/<billing-account-id>
 iam-onboarding
 ```
 
-Grant discovery/plan read access plus conditioned .tflock writes. Budget writers get only account-scoped budget create/get/list/update and their own state prefix, never IAM-policy writes, workload authority, or budget delete. Control administration stays in the protected project and its state. Runtime billing unlink is granted only on managed projects through an explicit administrator-owned `iam-onboarding` state, not through budget-writer CI. Never create GCP service-account keys. Review the residual authority of an identity that can change the runtime image/policy.
+Grant discovery/plan read access plus conditioned .tflock writes. Budget writers get only account-scoped budget get/list/update and their own state prefix, never budget creation/deletion, IAM-policy writes (including shared-topic IAM), or workload authority. An administrator initializes new budgets as described below. Control administration stays in the protected project and its state. Runtime billing unlink is granted only on managed projects through an explicit administrator-owned `iam-onboarding` state, not through budget-writer CI. Never create GCP service-account keys. Review the residual authority of an identity that can change the runtime image/policy.
 
 ## Reviewed policy
 
@@ -89,11 +89,52 @@ drop them from the review, or move them between organizations as a discovery fix
 
 ## State and apply ordering
 
-Require complete fresh discovery and checked plans before any write. Initially create the dry-run control plane, then apply each billing account, then publish the combined policy secret only after every account succeeds. Runtime IAM onboarding is a separate explicit operator plan. Imports require a separate plan with at least one import and zero remote changes. After merge, re-plan the exact commit against current state and apply that checked saved plan using the corresponding scoped identity.
+Require complete fresh discovery and checked plans before any write. Initially create the dry-run control plane and initialize each account's budgets as administrator, then regenerate/review inventory. Automatic deployment must reject budget creates and notification-rule changes before any apply. Apply approved existing-budget updates in each account, then publish the combined policy secret only after every account succeeds. Runtime IAM onboarding is a separate explicit operator plan. Imports require a separate plan with at least one import and zero remote changes. After merge, re-plan the exact commit against current state and apply that checked saved plan using the corresponding scoped identity.
 
 Prefer independent approval/branch protection where available. A single-operator exception must be explicitly accepted and documented privately, monitored for access changes, and revisited before adding writers. Use default read workflow tokens, an isolated publisher with generated-only writes and no cloud identity, and a fail-closed access preflight.
 
 Initial policy is globally disabled/dry-run. Mutable readiness counters are deprecated and ignored. [Live readiness](reconciliation.md) requires seven actual consecutive successful days, fresh verified inventory, a recent observed disposable cycle, and an explicit independent persistent operator switch. Mandatory alert channels must reach a tested real recipient before production.
+
+### Administrator-owned budget initialization
+
+The [Budget API](https://docs.cloud.google.com/billing/docs/reference/budget/rest/v1/billingAccounts.budgets)
+requires the caller to have `pubsub.topics.setIamPolicy` when connecting a budget
+to a topic. Granting `roles/pubsub.publisher` to Google's
+`billing-budget-alert@system.gserviceaccount.com` is a separate prerequisite.
+Do not grant automated budget writers Pub/Sub Admin or shared-topic IAM-write
+authority to overcome a creation error.
+
+Use your existing administrator credentials for an explicitly reviewed,
+create/no-op-only plan in the **same** `billing-accounts/<account-id>` state that
+CI will use. Complete exact zero-change imports separately first. Run the pinned
+public `cmd/plancheck` against the generated account scope, then
+`sh scripts/check-budget-write-plan --operator-onboarding PLAN_JSON` from the
+private template. Inspect and explicitly approve the saved plan before applying;
+never use a new empty state, a failed apply's plan, or mix existing-budget changes
+with initialization. Do not modify unrelated budgets, runtime unlink permissions,
+or the disabled/dry-run policy. Refresh discovery after initialization and review
+the new canonical budget resource IDs before automatic deployment.
+
+For routine CI plans, run the scoped checker first and then
+`sh scripts/check-budget-write-plan PLAN_JSON`. Run `--report` during read-only
+review to list pending administrator work, and recheck the exact saved plan just
+before account apply. Gate **all** applies on every account's permission check.
+The example's older combined-root workflow is a scaffold, not a deployment-ready
+implementation of this separation or guard. Do not deploy it unchanged: use
+separate control/account states and identities, pinned dependencies, the scoped
+checker, and the permission-gate ordering described here.
+The [tested provider 8.5.0 implementation](https://github.com/hashicorp/terraform-provider-google/blob/v8.5.0/google/services/billingbudgets/resource_billing_budget.go#L775)
+adds notification fields to the update mask whenever `all_updates_rule` changes;
+therefore the guard blocks changes to that entire rule, not just its topic.
+Amount/threshold updates with an unchanged rule remain eligible for the scoped
+writer. Prove an actual update with that identity on a disposable guard budget
+before live acceptance; plans and credential-free tests cannot establish API
+authorization. Re-review this contract when upgrading the provider.
+
+This operator step is required for each new project's budget. Terraform still
+owns canonical guards throughout their lifecycle; only the authority used for
+initialization differs. The portable regression suite is
+`sh scripts/test-budget-write-plan` and requires `jq`, not GCP credentials.
 
 ## Recovery and warnings
 

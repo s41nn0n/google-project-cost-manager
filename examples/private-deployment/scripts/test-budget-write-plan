@@ -1,0 +1,135 @@
+#!/usr/bin/env sh
+# Credential-free regression coverage for the budget permission boundary.
+set -eu
+
+finops_script_dir=$(CDPATH= cd "$(dirname "$0")" && pwd)
+finops_check="$finops_script_dir/check-budget-write-plan"
+finops_test_dir=$(mktemp -d)
+cleanup() {
+  rm -f -- "$finops_test_dir/base.json" "$finops_test_dir/plan.json" \
+    "$finops_test_dir/report.json" "$finops_test_dir/stderr.log"
+  rmdir -- "$finops_test_dir"
+}
+trap cleanup 0
+
+jq -n '
+  {format_version:"1.2",terraform_version:"1.12.2",planned_values:{},
+   resource_changes:[
+     {address:"module.account.google_billing_budget.project[\"test-project\"]",
+      mode:"managed",type:"google_billing_budget",
+      change:{actions:["no-op"],
+        before:{amount:[{specified_amount:[{units:"1",currency_code:"USD"}]}],
+                all_updates_rule:[{pubsub_topic:"projects/test-control/topics/alerts",
+                  schema_version:"1.0",disable_default_iam_recipients:false,
+                  enable_project_level_recipients:false,
+                  monitoring_notification_channels:[]}]},
+        after:{amount:[{specified_amount:[{units:"1",currency_code:"USD"}]}],
+               all_updates_rule:[{pubsub_topic:"projects/test-control/topics/alerts",
+                  schema_version:"1.0",disable_default_iam_recipients:false,
+                  enable_project_level_recipients:false,
+                  monitoring_notification_channels:[]}]},
+        after_unknown:{}}}]}
+' > "$finops_test_dir/base.json"
+
+finops_test_count=0
+expect() {
+  finops_case=$1
+  finops_filter=$2
+  finops_expected=$3
+  shift 3
+  jq "$finops_filter" "$finops_test_dir/base.json" > "$finops_test_dir/plan.json"
+  finops_actual=0
+  sh "$finops_check" "$@" "$finops_test_dir/plan.json" \
+    > "$finops_test_dir/report.json" 2> "$finops_test_dir/stderr.log" || finops_actual=$?
+  if test "$finops_actual" -ne "$finops_expected"; then
+    printf 'FAIL %s: expected exit %s, got %s\n' "$finops_case" "$finops_expected" "$finops_actual" >&2
+    cat "$finops_test_dir/stderr.log" >&2
+    exit 1
+  fi
+  finops_test_count=$((finops_test_count + 1))
+}
+
+finops_update='.resource_changes[0].change.actions=["update"]'
+finops_create='.resource_changes[0].change.actions=["create"] | .resource_changes[0].change.before=null'
+
+expect no-op '.' 0
+expect import-no-op '.resource_changes[0].change.importing={id:"billingAccounts/000000-000000-000001/budgets/test-budget"}' 0
+expect amount-update "$finops_update | .resource_changes[0].change.after.amount[0].specified_amount[0].units=\"2\"" 0
+expect threshold-update "$finops_update | .resource_changes[0].change.after.threshold_rules=[{threshold_percent:0.8,spend_basis:\"CURRENT_SPEND\"}]" 0
+expect false-unknown "$finops_update | .resource_changes[0].change.after_unknown.all_updates_rule=[{pubsub_topic:false}]" 0
+expect data-read '.resource_changes += [{mode:"data",address:"data.google_project.control",type:"google_project",change:{actions:["read"]}}]' 0
+expect empty-account 'del(.resource_changes)' 0
+expect null-changes '.resource_changes=null' 0
+expect create-blocked "$finops_create" 1
+expect create-reported "$finops_create" 0 --report
+jq -e '.requires_operator_onboarding and .budget_creates==1 and
+  .budget_updates==0 and .operator_actions[0].reason=="new_budget"' \
+  "$finops_test_dir/report.json" >/dev/null
+expect operator-create "$finops_create" 0 --operator-onboarding
+expect operator-no-op '.' 0 --operator-onboarding
+expect operator-update "$finops_update" 1 --operator-onboarding
+expect operator-mixed "$finops_update | .resource_changes += [(.resource_changes[0] | .address=\"new-budget\" | .change.actions=[\"create\"] | .change.before=null)]" 1 --operator-onboarding
+
+for finops_change in \
+  'pubsub_topic="projects/test-control/topics/other"' \
+  'schema_version="other"' \
+  'disable_default_iam_recipients=true' \
+  'enable_project_level_recipients=true' \
+  'monitoring_notification_channels=["projects/test-control/notificationChannels/test"]'
+do
+  expect notification-change "$finops_update | .resource_changes[0].change.after.all_updates_rule[0].$finops_change" 1
+  expect notification-reported "$finops_update | .resource_changes[0].change.after.all_updates_rule[0].$finops_change" 0 --report
+  jq -e '.requires_operator_onboarding and .operator_actions[0].reason=="notification_rule_change"' \
+    "$finops_test_dir/report.json" >/dev/null
+done
+
+for finops_filter in \
+  'del(.resource_changes[0].change.before.all_updates_rule)' \
+  '.resource_changes[0].change.after.all_updates_rule=[]' \
+  '.resource_changes[0].change.before=null' \
+  '.resource_changes[0].change.after=null' \
+  '.resource_changes[0].change.after.all_updates_rule=[null]' \
+  '.resource_changes[0].change.before.all_updates_rule=[null]' \
+  '.resource_changes[0].change.after_unknown.all_updates_rule=true' \
+  '.resource_changes[0].change.after_unknown.all_updates_rule=[{pubsub_topic:true}]'
+do
+  expect incomplete-rule "$finops_update | $finops_filter" 1
+done
+
+for finops_filter in \
+  '.resource_changes[0].change.actions=["delete"]' \
+  '.resource_changes[0].change.actions=["create","delete"]' \
+  '.resource_changes[0].change.actions=["delete","create"]' \
+  '.resource_changes[0].change.actions=["forget"]' \
+  '.resource_changes[0].change.actions=[]' \
+  '.resource_changes[0].change.actions="update"' \
+  '.resource_changes[0].mode="unknown"' \
+  '.resource_changes[0].mode="data" | .resource_changes[0].change.actions=["update"]' \
+  '.resource_changes[0].type="google_pubsub_topic_iam_member" | .resource_changes[0].change.actions=["create"]' \
+  '.resource_changes[0].type="google_project_iam_member" | .resource_changes[0].change.actions=["update"]' \
+  '.resource_changes={}' \
+  'del(.planned_values)' \
+  'del(.terraform_version)' \
+  '.format_version=""' \
+  '.planned_values=[]' \
+  'null' \
+  'empty' \
+  '.,.' \
+  '.resource_changes[0].change.actions=["create"] | ., (.resource_changes=[])'
+do
+  expect malformed-or-unsafe "$finops_filter" 2
+  expect report-cannot-bypass "$finops_filter" 2 --report
+done
+
+expect sorted-report "$finops_create | .resource_changes += [(.resource_changes[0] | .address=\"aaa-budget\")]" 0 --report
+jq -e '.operator_actions | map(.address) | . == sort' "$finops_test_dir/report.json" >/dev/null
+finops_sorted_report=$(jq -c . "$finops_test_dir/report.json")
+expect reordered-report "$finops_create | .resource_changes += [(.resource_changes[0] | .address=\"aaa-budget\")] | .resource_changes |= reverse" 0 --report
+jq -e '.operator_actions | map(.address) | . == sort' "$finops_test_dir/report.json" >/dev/null
+test "$finops_sorted_report" = "$(jq -c . "$finops_test_dir/report.json")"
+
+if sh "$finops_check" "$finops_test_dir/missing.json" > /dev/null 2>&1; then
+  printf '%s\n' 'missing plan unexpectedly accepted' >&2
+  exit 1
+fi
+printf 'budget-write permission tests passed (%s cases; no cloud credentials required).\n' "$finops_test_count"
