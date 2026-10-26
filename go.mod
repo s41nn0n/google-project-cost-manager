@@ -4,7 +4,7 @@ go 1.26.8
 
 require (
 	cloud.google.com/go/firestore v1.26.0
-	cloud.google.com/go/secretmanager v1.22.0
+	cloud.google.com/go/secretmanager v1.23.0
 	github.com/google/uuid v1.6.0
 	google.golang.org/api v0.300.0
 	google.golang.org/grpc v1.84.0
