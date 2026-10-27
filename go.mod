@@ -3,7 +3,7 @@ module github.com/example/google-project-cost-manager
 go 1.26.10
 
 require (
-	cloud.google.com/go/firestore v1.26.0
+	cloud.google.com/go/firestore v1.29.0
 	cloud.google.com/go/secretmanager v1.22.0
 	github.com/google/uuid v1.6.0
 	google.golang.org/api v0.300.0
