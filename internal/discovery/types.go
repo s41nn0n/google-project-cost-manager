@@ -19,12 +19,14 @@ const (
 )
 
 type ReviewedPolicy struct {
-	ControlProjectID     string                   `yaml:"controlProjectId" json:"controlProjectId"`
-	RequiredPubSubTopic  string                   `yaml:"requiredPubSubTopic" json:"requiredPubSubTopic"`
-	EnforcementMode      string                   `yaml:"enforcementMode" json:"enforcementMode"`
-	EnforcementThreshold float64                  `yaml:"enforcementThreshold" json:"enforcementThreshold"`
-	BillingAccounts      map[string]AccountPolicy `yaml:"billingAccounts" json:"billingAccounts"`
-	ProtectedProjects    map[string]string        `yaml:"protectedProjects" json:"protectedProjects"`
+	ControlProjectID        string                   `yaml:"controlProjectId" json:"controlProjectId"`
+	RequiredPubSubTopic     string                   `yaml:"requiredPubSubTopic" json:"requiredPubSubTopic"`
+	EnforcementMode         string                   `yaml:"enforcementMode" json:"enforcementMode"`
+	EnforcementThreshold    float64                  `yaml:"enforcementThreshold" json:"enforcementThreshold"`
+	ReadinessMode           string                   `yaml:"readinessMode,omitempty" json:"readinessMode,omitempty"`
+	ProjectEnforcementModes map[string]string        `yaml:"projectEnforcementModes,omitempty" json:"projectEnforcementModes,omitempty"`
+	BillingAccounts         map[string]AccountPolicy `yaml:"billingAccounts" json:"billingAccounts"`
+	ProtectedProjects       map[string]string        `yaml:"protectedProjects" json:"protectedProjects"`
 }
 
 type AccountPolicy struct {
@@ -58,6 +60,17 @@ func (p *ReviewedPolicy) ApplyDefaults() {
 }
 
 func (p ReviewedPolicy) Validate() error {
+	if p.ReadinessMode != "" && p.ReadinessMode != "per_project" {
+		return fmt.Errorf("readinessMode must be omitted or per_project")
+	}
+	if len(p.ProjectEnforcementModes) > 0 && p.ReadinessMode != "per_project" {
+		return fmt.Errorf("projectEnforcementModes requires per_project readiness")
+	}
+	for project, mode := range p.ProjectEnforcementModes {
+		if project == "" || (mode != "dry_run" && mode != "live") || (mode == "live" && (project == p.ControlProjectID || p.ProtectedProjects[project] != "")) {
+			return fmt.Errorf("invalid project enforcement mode for %s", project)
+		}
+	}
 	if p.ControlProjectID == "" {
 		return fmt.Errorf("controlProjectId is required")
 	}
@@ -160,6 +173,7 @@ type ProjectInventory struct {
 	ImportCandidate      string           `json:"importCandidate,omitempty" yaml:"importCandidate,omitempty"`
 	BudgetClassification string           `json:"budgetClassification,omitempty" yaml:"budgetClassification,omitempty"`
 	BudgetAccountName    string           `json:"budgetAccountName,omitempty" yaml:"budgetAccountName,omitempty"`
+	EnforcementMode      string           `json:"enforcementMode,omitempty" yaml:"enforcementMode,omitempty"`
 	ExistingBudgets      []ExistingBudget `json:"existingBudgets,omitempty" yaml:"existingBudgets,omitempty"`
 }
 
@@ -188,10 +202,11 @@ type Diagnostic struct {
 }
 
 type Coverage struct {
-	TotalProjects   int                     `json:"totalProjects"`
-	Classifications map[string]int          `json:"classifications"`
-	Complete        bool                    `json:"complete"`
-	BudgetDiscovery BudgetDiscoveryCoverage `json:"budgetDiscovery"`
+	TotalProjects    int                     `json:"totalProjects"`
+	Classifications  map[string]int          `json:"classifications"`
+	Complete         bool                    `json:"complete"`
+	BudgetDiscovery  BudgetDiscoveryCoverage `json:"budgetDiscovery"`
+	EnforcementModes map[string]int          `json:"enforcementModes,omitempty"`
 }
 
 // Complete coverage refers to organization projects and standard alert budgets,

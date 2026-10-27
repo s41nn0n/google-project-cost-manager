@@ -84,11 +84,11 @@ func New(ctx context.Context, c *config.Config) (*Store, error) {
 	return &Store{client: client}, nil
 }
 func (s *Store) Close() error { return s.client.Close() }
-func (s *Store) ref(c *config.Config) *firestore.DocumentRef {
-	return s.client.Collection("rollout-evidence").Doc(Fingerprint(c))
-}
 func (s *Store) Read(ctx context.Context, c *config.Config) (Evidence, error) {
-	snap, err := s.ref(c).Get(ctx)
+	return s.readKey(ctx, Fingerprint(c))
+}
+func (s *Store) readKey(ctx context.Context, key string) (Evidence, error) {
+	snap, err := s.client.Collection("rollout-evidence").Doc(key).Get(ctx)
 	if status.Code(err) == codes.NotFound {
 		return Evidence{Days: map[string]bool{}}, nil
 	}
@@ -100,7 +100,10 @@ func (s *Store) Read(ctx context.Context, c *config.Config) (Evidence, error) {
 	return e, err
 }
 func (s *Store) update(ctx context.Context, c *config.Config, f func(*Evidence)) error {
-	ref := s.ref(c)
+	return s.updateKey(ctx, Fingerprint(c), f)
+}
+func (s *Store) updateKey(ctx context.Context, key string, f func(*Evidence)) error {
+	ref := s.client.Collection("rollout-evidence").Doc(key)
 	return s.client.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
 		e := Evidence{Days: map[string]bool{}}
 		snap, err := tx.Get(ref)
@@ -119,11 +122,12 @@ func (s *Store) update(ctx context.Context, c *config.Config, f func(*Evidence))
 	})
 }
 func (s *Store) RecordDay(ctx context.Context, c *config.Config, now time.Time, passed bool) error {
-	return s.update(ctx, c, func(e *Evidence) {
-		day := now.UTC().Format("2006-01-02")
-		prior, exists := e.Days[day]
-		e.Days[day] = passed && (!exists || prior)
-	})
+	return s.update(ctx, c, func(e *Evidence) { recordDay(e, now, passed) })
+}
+func recordDay(e *Evidence, now time.Time, passed bool) {
+	day := now.UTC().Format("2006-01-02")
+	prior, exists := e.Days[day]
+	e.Days[day] = passed && (!exists || prior)
 }
 
 // RecordToggle is only used by the explicit operator CLI after an observed cycle.
@@ -131,7 +135,22 @@ func (s *Store) RecordToggle(ctx context.Context, c *config.Config, project stri
 	if project == "" || project == c.ControlProjectID {
 		return fmt.Errorf("invalid disposable project")
 	}
-	return s.update(ctx, c, func(e *Evidence) { e.ToggleProject = project; e.ToggleAt = now.UTC() })
+	record := func(e *Evidence) { e.ToggleProject = project; e.ToggleAt = now.UTC() }
+	if c.ReadinessMode == "" {
+		if err := s.update(ctx, c, record); err != nil {
+			return err
+		}
+	}
+	for _, b := range c.Budgets {
+		key, err := ProjectFingerprint(c, b.ProjectID)
+		if err != nil {
+			return err
+		}
+		if err := s.updateKey(ctx, key, record); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 func Verify(ctx context.Context, c *config.Config) error {
 	if err := CheckFresh(c, time.Now().UTC()); err != nil {
@@ -142,6 +161,9 @@ func Verify(ctx context.Context, c *config.Config) error {
 		return err
 	}
 	defer s.Close()
+	if c.ReadinessMode == config.ReadinessPerProject {
+		return checkProjects(c, time.Now().UTC(), func(project string) (Evidence, error) { return s.ReadProject(ctx, c, project) })
+	}
 	e, err := s.Read(ctx, c)
 	if err != nil {
 		return err

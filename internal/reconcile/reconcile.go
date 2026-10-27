@@ -120,7 +120,7 @@ func Run(ctx context.Context, cfg *config.Config, lister BudgetLister, resolver 
 		}
 		if idx < 0 {
 			name := firstName(cb.Names)
-			r.add(Diff{Type: "configured_budget_missing_in_gcp", Severity: SeverityError, ConfiguredName: name, Message: "Config has policy for a budget that does not exist in GCP"})
+			r.add(Diff{Type: "configured_budget_missing_in_gcp", Severity: SeverityError, BudgetName: cb.BudgetResourceName, ConfiguredName: name, Message: "Config has policy for a budget that does not exist in GCP"})
 			continue
 		}
 		matchedGCP[idx] = true

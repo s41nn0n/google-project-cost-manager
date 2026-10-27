@@ -26,6 +26,42 @@ The streak ends today or yesterday; today's explicit failure always blocks.
 Material changes reset evidence. Inventory observation must be within 48 hours,
 verified by a fresh complete discovery before policy publication.
 
+### Incremental project onboarding
+
+The legacy whole-policy gate remains the default for existing deployments.
+New releases support an explicit `readinessMode: per_project` policy. Each
+project's evidence binds its exact budget/account/project identity, amount,
+currency, threshold, relevant safety settings, state backend, and release.
+Adding another project or account does not change an unchanged project's key.
+Changing the release or shared safety settings still invalidates affected evidence.
+
+In the reviewed discovery policy, select `readinessMode: per_project` and list
+only approved live projects under `projectEnforcementModes: {project-id: live}`.
+Unlisted projects default to `dry_run`, even when the existing projects are live.
+Initialize the new budget and narrowly scoped runtime IAM through the existing
+administrator-owned onboarding states. Publish it as a visible dry-run entry;
+do not silently omit it or count it as live protection. Daily reconciliation
+records real results per project, including pending entries. An attributed
+pending-project failure does not poison an unrelated project's successful day;
+unattributed, incomplete, inaccessible, or stale observations fail closed.
+
+Before promotion, obtain seven consecutive real successful days and an explicitly
+approved observed toggle test for the new project's current terms. Then review
+its `projectEnforcementModes` change to `live`; publication verifies live entries,
+and every unlink rechecks only the targeted project's evidence plus the global
+operator stop. Draft entries cannot bypass or override either global stop.
+
+This is an opt-in release upgrade, not an automatic migration of historical
+evidence. New code collects scoped observations and observed toggle evidence
+alongside the legacy gate, allowing a same-release transition once those records
+qualify. Never copy legacy dates, invent counters, or retain an old release ID
+for a new image. Release/image changes still require their own acceptance;
+stage that rollout before changing the running receiver's policy. Until then,
+keep the current live receiver and reviewed policy unchanged. Publish a tested
+immutable release/image and align private module/scanner/image pins before using
+the feature. The generator rejects old modules lacking the scoped-readiness
+capability marker. No new database, runtime role, or workload permission is needed.
+
 The operator explicitly approves one disposable project with no workloads:
 
 ~~~sh

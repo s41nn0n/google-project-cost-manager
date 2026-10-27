@@ -41,7 +41,12 @@ variable "projects" {
     currency_code        = optional(string, "")
     budget_display_name  = optional(string, "")
     budget_resource_name = optional(string, "")
+    enforcement_mode     = optional(string, "")
   }))
+  validation {
+    condition     = alltrue([for p in values(var.projects) : contains(["", "dry_run", "live"], p.enforcement_mode)])
+    error_message = "Project enforcement_mode must be empty, dry_run, or live."
+  }
   validation {
     condition     = alltrue([for p in values(var.projects) : contains(["managed", "protected", "unbilled", "inactive", "blocked"], p.classification)])
     error_message = "Every project must have an explicit inventory classification."

@@ -67,9 +67,20 @@ func terraformInputs(result Result, policy ReviewedPolicy) ([]byte, error) {
 				"budget_display_name":  project.CanonicalDisplayName,
 				"budget_resource_name": project.ImportCandidate,
 			}
+			if policy.ReadinessMode == "per_project" {
+				mode := policy.ProjectEnforcementModes[project.ProjectID]
+				if mode == "" || project.Classification != ClassManaged || policy.EnforcementMode != "live" {
+					mode = "dry_run"
+				}
+				projects[project.ProjectID].(map[string]any)["enforcement_mode"] = mode
+			}
 		}
 		accounts[name] = map[string]any{"default_monthly_amount": account.DefaultMonthlyAmount, "currency_code": account.CurrencyCode, "projects": projects}
 	}
-	data, err := json.MarshalIndent(map[string]any{"organization_id": strings.TrimPrefix(result.Inventory.Organization, "organizations/"), "control_project_id": policy.ControlProjectID, "billing_accounts": accounts}, "", "  ")
+	inputs := map[string]any{"organization_id": strings.TrimPrefix(result.Inventory.Organization, "organizations/"), "control_project_id": policy.ControlProjectID, "billing_accounts": accounts}
+	if policy.ReadinessMode != "" {
+		inputs["readiness_mode"] = policy.ReadinessMode
+	}
+	data, err := json.MarshalIndent(inputs, "", "  ")
 	return append(data, '\n'), err
 }

@@ -199,6 +199,21 @@ func Scan(ctx context.Context, organization string, policy ReviewedPolicy, clien
 		}
 		result.addProject(entry)
 	}
+	if policy.ReadinessMode == "per_project" {
+		result.Coverage.EnforcementModes = map[string]int{}
+		for i := range result.Inventory.Projects {
+			entry := &result.Inventory.Projects[i]
+			if entry.Classification != ClassManaged && entry.BudgetClassification != "retained_unbilled" {
+				continue
+			}
+			mode := policy.ProjectEnforcementModes[entry.ProjectID]
+			if mode == "" || entry.Classification != ClassManaged || policy.EnforcementMode != "live" {
+				mode = "dry_run"
+			}
+			entry.EnforcementMode = mode
+			result.Coverage.EnforcementModes[mode]++
+		}
+	}
 	result.Normalize()
 	return result, nil
 }

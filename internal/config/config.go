@@ -18,6 +18,7 @@ import (
 const (
 	BackendFile          = "file"
 	BackendSecretManager = "secretmanager"
+	ReadinessPerProject  = "per_project"
 )
 
 type Config struct {
@@ -37,6 +38,8 @@ type Config struct {
 	UnknownAlertProjects        []string                 `yaml:"unknownAlertProjects" json:"unknownAlertProjects"`
 	SelfTest                    SelfTestConfig           `yaml:"selfTest" json:"selfTest"`
 	Reconcile                   ReconcileConfig          `yaml:"reconcile" json:"reconcile"`
+	// Omitted for legacy policies: their existing evidence identity must not change.
+	ReadinessMode string `yaml:"readinessMode,omitempty" json:"readinessMode,omitempty"`
 }
 
 type EventStateConfig struct {
@@ -197,6 +200,12 @@ func (c *Config) ApplyDefaults() {
 }
 
 func (c *Config) Validate() error {
+	if c.ReadinessMode != "" && c.ReadinessMode != ReadinessPerProject {
+		return errors.New("readinessMode must be omitted or per_project")
+	}
+	if c.ReadinessMode == ReadinessPerProject && (c.SchemaVersion != 2 || c.EventState.Backend != "firestore" || c.EventState.ProjectID == "" || c.EventState.DatabaseID == "" || !c.Reconcile.Enabled) {
+		return errors.New("per_project readiness requires canonical schema 2, Firestore, and reconciliation")
+	}
 	if c.SchemaVersion < 0 || c.SchemaVersion > 2 {
 		return errors.New("unsupported schemaVersion")
 	}
@@ -236,8 +245,16 @@ func (c *Config) Validate() error {
 	if c.MaxProjectsDisabledPerEvent < 0 {
 		return errors.New("maxProjectsDisabledPerEvent cannot be negative")
 	}
+	seenProjects := map[string]bool{}
 	for _, b := range c.Budgets {
 		if c.SchemaVersion >= 2 {
+			if c.ReadinessMode == ReadinessPerProject && (b.ProjectID == c.ControlProjectID || strings.ContainsAny(b.ProjectID, "/ \t\r\n")) {
+				return errors.New("per_project budgets require a bare non-control project ID")
+			}
+			if c.ReadinessMode == ReadinessPerProject && seenProjects[b.ProjectID] {
+				return errors.New("per_project readiness requires one canonical budget per project")
+			}
+			seenProjects[b.ProjectID] = true
 			if c.EnforcementEnabled && (b.MonthlyAmount <= 0 || math.IsNaN(b.MonthlyAmount) || math.IsInf(b.MonthlyAmount, 0) || len(b.CurrencyCode) != 3) {
 				return errors.New("live policy requires reviewed positive amount and currency")
 			}

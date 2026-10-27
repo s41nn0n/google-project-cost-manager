@@ -20,5 +20,9 @@ func main() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-	fmt.Println("Verified seven clean daily reconciliations and disposable-project toggle evidence.")
+	if cfg.ReadinessMode == config.ReadinessPerProject && cfg.EnforcementEnabled && cfg.Defaults.DryRun != nil && !*cfg.Defaults.DryRun {
+		fmt.Println("Verified live-project readiness; dry-run projects remain staged and are not approved for enforcement.")
+	} else {
+		fmt.Println("Verified seven clean daily reconciliations and disposable-project toggle evidence.")
+	}
 }

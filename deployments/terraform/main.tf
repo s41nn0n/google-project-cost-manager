@@ -27,7 +27,7 @@ module "billing_account" {
 }
 
 locals {
-  generated_policy = {
+  generated_policy = merge({
     schemaVersion               = 2
     enforcementEnabled          = false
     inventoryObservedAt         = var.inventory_observed_at
@@ -67,5 +67,5 @@ locals {
         }
       ]
     ])
-  }
+  }, var.readiness_mode == "per_project" ? { readinessMode = "per_project" } : {})
 }

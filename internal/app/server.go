@@ -128,7 +128,7 @@ func (s *Server) billingAlert(w http.ResponseWriter, r *http.Request) {
 		if !decision.Disable || decision.DryRun || decision.ProjectID == "" {
 			continue
 		}
-		if err := s.opt.ReadinessCheck(r.Context(), cfg); err != nil {
+		if err := s.checkReadiness(r.Context(), cfg, decision.ProjectID); err != nil {
 			decision.Disable, decision.Reason = false, "live_readiness_failed"
 			logAlert("stale_inventory", decision.ProjectID, err)
 			failed = true
@@ -221,7 +221,7 @@ func (s *Server) enforceCanonical(ctx context.Context, cfg *config.Config, envel
 		decision.Disable, decision.Reason = false, "wrong_billing_account"
 		return store.Complete(ctx, key, event, false)
 	}
-	if err := s.opt.ReadinessCheck(ctx, cfg); err != nil {
+	if err := s.checkReadiness(ctx, cfg, decision.ProjectID); err != nil {
 		decision.Disable, decision.Reason = false, "operator_enforcement_stopped"
 		_ = store.Complete(ctx, key, event, false)
 		return err
@@ -323,7 +323,7 @@ func (s *Server) reconcile(w http.ResponseWriter, r *http.Request) {
 		passed := err == nil && result.Summary.Errors == 0 && readiness.CheckFresh(cfg, time.Now().UTC()) == nil
 		evidence, openErr := readiness.New(r.Context(), cfg)
 		if openErr == nil {
-			openErr = evidence.RecordDay(r.Context(), cfg, time.Now().UTC(), passed)
+			openErr = evidence.RecordReconciliation(r.Context(), cfg, time.Now().UTC(), result, err)
 			_ = evidence.Close()
 		}
 		if openErr != nil {

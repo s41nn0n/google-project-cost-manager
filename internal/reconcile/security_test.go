@@ -46,3 +46,12 @@ func TestCanonicalDriftAndMissingPermissionsBlockReadiness(t *testing.T) {
 		t.Fatalf("already unbilled should reconcile: %v %+v", err, r)
 	}
 }
+
+func TestMissingCanonicalBudgetRetainsIdentityForScopedReadiness(t *testing.T) {
+	name := "billingAccounts/A/budgets/new"
+	c := &config.Config{Reconcile: config.ReconcileConfig{Enabled: true, BillingAccountNames: []string{"billingAccounts/A"}}, Budgets: []config.Budget{{BudgetResourceName: name, ProjectID: "new", BillingAccountName: "billingAccounts/A"}}}
+	r, err := Run(context.Background(), c, fakeLister{}, canonicalResolver{})
+	if err != nil || r.Summary.Errors != 1 || len(r.Diffs) != 1 || r.Diffs[0].BudgetName != name {
+		t.Fatalf("missing budget error cannot be attributed: %v %+v", err, r)
+	}
+}
