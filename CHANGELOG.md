@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.0.5](https://github.com/s41nn0n/google-project-cost-manager/compare/v1.0.4...v1.0.5) (2026-10-27)
+
+
+### Bug Fixes
+
+* isolate readiness for incremental project onboarding ([7d4973e](https://github.com/s41nn0n/google-project-cost-manager/commit/7d4973e07c4c14ced8a659f2fd4b905ba31afdae))
+* patch Go toolchain and HTTP2 security vulnerabilities ([ee9a576](https://github.com/s41nn0n/google-project-cost-manager/commit/ee9a576a70402ebf7c2a3a88be090ecd0e56ecac))
+
 ## [1.0.4](https://github.com/s41nn0n/google-project-cost-manager/compare/v1.0.3...v1.0.4) (2026-10-06)
 
 
