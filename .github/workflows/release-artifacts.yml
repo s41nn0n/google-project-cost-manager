@@ -65,7 +65,7 @@ jobs:
       - name: Build and scan operator tools
         run: |
           mkdir -p dist
-          for tool in discover plancheck readiness enforcement verify-rollout; do
+          for tool in discover plancheck readiness enforcement verify-rollout approve-readiness; do
             binary="dist/gcp-finops-${tool}_linux_amd64"
             # Keep symbols: govulncheck falls back to broad module findings on stripped binaries.
             CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o "$binary" "./cmd/$tool"
@@ -167,7 +167,7 @@ jobs:
             [.assets[].name] as $assets |
             ["gcp-finops-discover_linux_amd64", "gcp-finops-plancheck_linux_amd64",
              "gcp-finops-readiness_linux_amd64", "gcp-finops-enforcement_linux_amd64",
-             "gcp-finops-verify-rollout_linux_amd64", "SOURCE_COMMIT", "SHA256SUMS"] |
+             "gcp-finops-verify-rollout_linux_amd64", "gcp-finops-approve-readiness_linux_amd64", "SOURCE_COMMIT", "SHA256SUMS"] |
             all(.[]; . as $name | $assets | index($name) != null)'
           printf '%s@%s\n' "$IMAGE_REPOSITORY" "$IMAGE_DIGEST" > "$RUNNER_TEMP/IMAGE_DIGEST"
           bash scripts/upload-release-assets "$RUNNER_TEMP/IMAGE_DIGEST"
