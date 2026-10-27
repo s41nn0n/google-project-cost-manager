@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.0](https://github.com/s41nn0n/google-project-cost-manager/compare/v1.0.5...v1.1.0) (2026-10-27)
+
+
+### Features
+
+* allow explicit validated deployment transition for urgent onboarding ([9dcb763](https://github.com/s41nn0n/google-project-cost-manager/commit/9dcb763044a841c018913bfcb7e62118b28128c5))
+
 ## [1.0.5](https://github.com/s41nn0n/google-project-cost-manager/compare/v1.0.4...v1.0.5) (2026-10-27)
 
 
