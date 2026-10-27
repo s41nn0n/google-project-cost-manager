@@ -80,11 +80,29 @@ provider upgrades, and review a new plan against the original partial state.
 Existing resources must not be removed or replaced just to resume an apply.
 No live apply or publisher IAM change is performed by these code tests.
 
+## Go security patch verification (2026-10-27)
+
+Go is pinned to 1.26.10 in the module, digest-pinned Docker builder, CI, and
+release jobs; `golang.org/x/net` is pinned to v0.60.0. These patch the findings
+reported by the October CI run without advancing to another Go release series.
+See the [Go patch release history](https://go.dev/doc/devel/release) and
+[x/net HTTP/2 advisory](https://pkg.go.dev/vuln/GO-2026-6617).
+
+The full race suite, vet, and module checksum verification pass. Source scanning
+reports zero reachable vulnerabilities; the server and all five release tools
+pass the existing binary guard with no vulnerable-symbol exception needed.
+The rebuilt image, scanned with digest-pinned Trivy 0.70.0 and the current
+database, has zero HIGH/CRITICAL findings. A regression test keeps the module,
+Docker builder, CI, and release toolchain versions aligned. Existing vulnerability
+exceptions and deployment source/image pins are unchanged. Local verification
+does not patch an already running image: publishing and rolling out a new digest
+remain separate, explicitly reviewed steps.
+
 ## Version-bound binary scan exception
 
-GO-2026-6443 is reported against the linked
+The original verification reported GO-2026-6443 against the linked
 google.golang.org/grpc/internal/transport.http2Server.HandleStreams symbol in
-grpc v1.84.0. The Go database currently treats that version as affected, but the
+grpc v1.84.0. At the time, the Go database treated that version as affected, but the
 [upstream gRPC advisory](https://github.com/grpc/grpc-go/security/advisories/GHSA-2v4p-qf9q-27wj)
 explicitly lists stable v1.84.0 as patched. The downloaded v1.84.0 source includes
 the rejection of requests missing both host and authority headers; the
