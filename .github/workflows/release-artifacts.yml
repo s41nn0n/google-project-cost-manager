@@ -74,7 +74,7 @@ jobs:
           printf '%s\n' "$RELEASE_SHA" > dist/SOURCE_COMMIT
           sha256sum dist/gcp-finops-*_linux_amd64 dist/SOURCE_COMMIT > dist/SHA256SUMS
       - name: Attest operator tools
-        uses: actions/attest-build-provenance@96b4a1ef7235a096b17240c259729fdd70c83d45
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be
         with:
           subject-path: dist/*
       - name: Attach assets to draft (never overwrite)
@@ -138,7 +138,7 @@ jobs:
           digest="$(docker image inspect "$image_ref" --format '{{json .RepoDigests}}' | jq -er --arg repo "$IMAGE_REPOSITORY" '.[] | select(startswith($repo + "@sha256:")) | split("@")[1]')"
           [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
           printf 'digest=%s\n' "$digest" >> "$GITHUB_OUTPUT"
-      - uses: actions/attest-build-provenance@96b4a1ef7235a096b17240c259729fdd70c83d45
+      - uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be
         with:
           subject-name: ghcr.io/${{ github.repository }}
           subject-digest: ${{ steps.push.outputs.digest }}
