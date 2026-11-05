@@ -7,10 +7,57 @@ import (
 	"github.com/example/google-project-cost-manager/internal/billing"
 	"github.com/example/google-project-cost-manager/internal/config"
 	"github.com/example/google-project-cost-manager/internal/eventstate"
+	"github.com/example/google-project-cost-manager/internal/reconcile"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 )
+
+func TestHealthAndSetupValidationExposeBlockedEnforcement(t *testing.T) {
+	for _, ready := range []bool{false, true} {
+		cfg := organizationConfig(t, "live")
+		cfg.ReleaseID, cfg.InventoryObservedAt = "release", time.Now().UTC()
+		calls := 0
+		s, _ := NewServer(Options{
+			LoadConfig: func(context.Context) (*config.Config, error) { return cfg, nil },
+			ReadinessCheck: func(context.Context, *config.Config) error {
+				calls++
+				if !ready {
+					return errors.New("current project preflight failed")
+				}
+				return nil
+			},
+			ReconcileLister: fakeBudgetLister{}, ProjectResolver: fakeProjectResolver{},
+			ReconcileRunner: func(context.Context, *config.Config, reconcile.BudgetLister, reconcile.ProjectResolver) (reconcile.Result, error) {
+				return reconcile.Result{Summary: reconcile.Summary{ConfiguredBudgets: 1}}, nil
+			},
+		})
+		for _, request := range []*http.Request{
+			httptest.NewRequest(http.MethodGet, "/readyz", nil),
+			httptest.NewRequest(http.MethodPost, "/self-test", bytes.NewBufferString(`{"mode":"setup_validation"}`)),
+		} {
+			response := httptest.NewRecorder()
+			s.Router().ServeHTTP(response, request)
+			expected := http.StatusServiceUnavailable
+			if ready {
+				expected = http.StatusOK
+			}
+			if response.Code != expected {
+				t.Fatalf("ready=%v path=%s status=%d body=%s", ready, request.URL.Path, response.Code, response.Body.String())
+			}
+		}
+		if calls != 2 {
+			t.Fatal("health checks omitted live enforcement readiness")
+		}
+		cfg.InventoryObservedAt = time.Now().Add(-49 * time.Hour)
+		response := httptest.NewRecorder()
+		s.Router().ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/self-test", bytes.NewBufferString(`{"mode":"setup_validation"}`)))
+		if response.Code != http.StatusServiceUnavailable {
+			t.Fatal("stale inventory reported healthy")
+		}
+	}
+}
 
 func TestMissingReadinessCannotDisable(t *testing.T) {
 	cfg := organizationConfig(t, "live")

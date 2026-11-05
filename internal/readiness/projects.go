@@ -103,11 +103,23 @@ func (s *Store) RecordReconciliation(ctx context.Context, c *config.Config, now 
 		if err != nil {
 			return err
 		}
-		if err := s.updateKey(ctx, key, func(e *Evidence) { recordDay(e, now, passed) }); err != nil {
+		if err := s.updateKey(ctx, key, func(e *Evidence) {
+			recordDay(e, now, passed)
+			recordObservation(e, now, passed)
+		}); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func recordObservation(e *Evidence, now time.Time, passed bool) {
+	// An older, slow request must not overwrite a newer failure. At an equal
+	// timestamp failure wins, regardless of transaction execution order.
+	if now.Before(e.LastReconciledAt) || (now.Equal(e.LastReconciledAt) && !e.LastPassed) {
+		return
+	}
+	e.LastReconciledAt, e.LastPassed = now.UTC(), passed
 }
 
 func checkProjects(c *config.Config, now time.Time, read func(string) (Evidence, error)) error {

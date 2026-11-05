@@ -20,6 +20,9 @@ type Evidence struct {
 	Days          map[string]bool `json:"days" firestore:"days"`
 	ToggleProject string          `json:"toggleProject" firestore:"toggleProject"`
 	ToggleAt      time.Time       `json:"toggleAt" firestore:"toggleAt"`
+	// Current observations are separate from the immutable daily failure history.
+	LastReconciledAt time.Time `json:"lastReconciledAt,omitempty" firestore:"lastReconciledAt,omitempty"`
+	LastPassed       bool      `json:"lastPassed" firestore:"lastPassed"`
 }
 
 func Fingerprint(c *config.Config) string {
@@ -153,34 +156,50 @@ func (s *Store) RecordToggle(ctx context.Context, c *config.Config, project stri
 	return nil
 }
 func Verify(ctx context.Context, c *config.Config) error {
-	_, err := VerifyWithTransitionStatus(ctx, c)
+	_, err := VerifyStatus(ctx, c)
 	return err
 }
+
+type VerificationStatus string
+
+const (
+	VerifiedOriginalGates VerificationStatus = "original_gates"
+	VerifiedTransition    VerificationStatus = "operator_transition"
+	VerifiedSystem        VerificationStatus = "qualified_system"
+)
 
 // VerifyWithTransitionStatus reports whether prior validation was accepted by
 // an explicit approval, so operator tools never claim fabricated target history.
 func VerifyWithTransitionStatus(ctx context.Context, c *config.Config) (bool, error) {
+	status, err := VerifyStatus(ctx, c)
+	return status == VerifiedTransition && err == nil, err
+}
+
+func VerifyStatus(ctx context.Context, c *config.Config) (VerificationStatus, error) {
 	if err := CheckFresh(c, time.Now().UTC()); err != nil {
-		return false, err
+		return "", err
 	}
 	s, err := New(ctx, c)
 	if err != nil {
-		return false, err
+		return "", err
 	}
 	defer s.Close()
 	if c.ReadinessMode == config.ReadinessPerProject {
-		return false, checkProjects(c, time.Now().UTC(), func(project string) (Evidence, error) { return s.ReadProject(ctx, c, project) })
+		if found, err := s.verifyQualifiedSystem(ctx, c, time.Now().UTC()); found || err != nil {
+			return VerifiedSystem, err
+		}
+		return VerifiedOriginalGates, checkProjects(c, time.Now().UTC(), func(project string) (Evidence, error) { return s.ReadProject(ctx, c, project) })
 	}
 	e, err := s.Read(ctx, c)
 	if err != nil {
-		return false, err
+		return "", err
 	}
 	now := time.Now().UTC()
 	if err := Check(e, c, now); err != nil {
 		approvalErr := s.verifyTransitionApproval(ctx, c, e, now, err)
-		return approvalErr == nil, approvalErr
+		return VerifiedTransition, approvalErr
 	}
-	return false, nil
+	return VerifiedOriginalGates, nil
 }
 
 // The operator stop is independent of policy publication, so an in-flight CI run

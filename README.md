@@ -13,6 +13,7 @@ This public repository contains no organization IDs, project IDs, billing-accoun
 - `deployments/terraform/modules/iam-onboarding`: separately reviewed operator-owned runtime billing permissions; never run as a budget writer.
 - `cmd/server`: hardened event receiver and administrative reconciler/self-test process.
 - `cmd/plancheck`, `cmd/readiness`, `cmd/verify-rollout`, `cmd/enforcement`: scoped plan checks, persisted readiness verification, explicit disposable testing, and independent operator enable/stop.
+- `cmd/qualify-system`: explicit migration of completed initial validation to a reviewed release, with current project checks for [incremental onboarding](docs/qualified-project-onboarding.md).
 
 Terraform 1.12 or newer is required. The public modules require Google provider 8.5.0 or newer within major version 8; all committed lock files use the tested 8.5.0 release. Production consumers should pin this repository by release commit and deploy the image by digest.
 
@@ -139,7 +140,7 @@ Schema version 2 policy is assembled from Terraform outputs after all account ap
 
 The receiver rejects unknown, malformed, stale-period, forecast-only, protected, and multi-project alerts. Actual spend—not an asserted threshold—must reach 80% of the reviewed amount. Global disabled/dry-run always wins over local live settings; the control project is unconditionally protected. Expiring Firestore claims retry unfinished work and fence stale workers. The current billing link is checked again before unlink; already-unlinked is success. It never restores production billing.
 
-Every real unlink requires inventory verified within 48 hours, seven distinct consecutive successful daily reconciliations tied to the release/policy, an observed disposable toggle within 30 days, and an independent persistent operator switch. CI cannot undo an operator stop by republishing a policy. The HTTP toggle route is forbidden; only the explicit operator CLI may restore billing during its disposable test. See [rollout and recovery](docs/reconciliation.md).
+Every real unlink requires inventory verified within 48 hours and an independent persistent operator switch. Initial validation requires seven genuine daily reconciliations and an observed disposable toggle. Legacy gates require that test within 30 days. An explicitly [qualified release](docs/qualified-project-onboarding.md) references completed initial validation and requires each live project's actual successful reconciliation within 36 hours; adding a project does not restart initial rollout or reset existing scopes. CI cannot undo an operator stop by republishing a policy. The HTTP toggle route is forbidden; only the explicit operator CLI may restore billing during its disposable test. See [rollout and recovery](docs/reconciliation.md).
 
 After unlink, discovery can retain a uniquely exact guard budget independently of the current billing link with per-project dry-run policy. Other protected/inactive/reassignment transitions require explicit lifecycle review; managed budgets use `prevent_destroy` and `ABANDON`.
 

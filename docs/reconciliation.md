@@ -28,6 +28,13 @@ verified by a fresh complete discovery before policy publication.
 
 ### Incremental project onboarding
 
+For systems that have completed initial validation, use the explicit
+[release qualification workflow](qualified-project-onboarding.md). It retains
+the genuine original evidence and separates it from current per-project health.
+New projects need budget/IAM onboarding, a successful runtime preflight, and an
+explicit live policy entry; they do not repeat the initial seven-day rollout.
+The unqualified/legacy gates below remain available and unchanged.
+
 The legacy whole-policy gate remains the default for existing deployments.
 New releases support an explicit `readinessMode: per_project` policy. Each
 project's evidence binds its exact budget/account/project identity, amount,

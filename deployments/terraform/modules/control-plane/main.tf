@@ -196,6 +196,7 @@ resource "google_pubsub_subscription" "receiver" {
   name                 = "billing-guard-receiver"
   topic                = google_pubsub_topic.billing_alerts.id
   ack_deadline_seconds = 60
+  expiration_policy { ttl = "" }
   push_config {
     push_endpoint = "${google_cloud_run_v2_service.receiver.uri}/pubsub/billing-alert"
     oidc_token {
@@ -218,6 +219,7 @@ resource "google_pubsub_subscription" "dead_letter" {
   project = var.control_project_id
   name    = "billing-guard-dead-letter-review"
   topic   = google_pubsub_topic.dead_letter.id
+  expiration_policy { ttl = "" }
 }
 
 resource "google_cloud_scheduler_job" "reconcile" {

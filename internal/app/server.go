@@ -92,7 +92,11 @@ func (s *Server) routes() {
 }
 
 func (s *Server) ready(w http.ResponseWriter, r *http.Request) {
-	if _, err := s.opt.LoadConfig(r.Context()); err != nil {
+	cfg, err := s.opt.LoadConfig(r.Context())
+	if err == nil && liveEnabled(cfg) {
+		err = s.opt.ReadinessCheck(r.Context(), cfg)
+	}
+	if err != nil {
 		http.Error(w, err.Error(), http.StatusServiceUnavailable)
 		return
 	}
@@ -296,7 +300,30 @@ func (s *Server) selfTest(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	writeJSON(w, http.StatusOK, selftest.RunWithReconciler(r.Context(), mode, cfg, client, s.opt.SelfTestStore, runner))
+	result := selftest.RunWithReconciler(r.Context(), mode, cfg, client, s.opt.SelfTestStore, runner)
+	if mode == "setup_validation" && cfg.SchemaVersion >= 2 {
+		err = readiness.CheckFresh(cfg, time.Now().UTC())
+		if err == nil && liveEnabled(cfg) {
+			err = s.opt.ReadinessCheck(r.Context(), cfg)
+		}
+		step := selftest.Step{Name: "enforcement_readiness", OK: err == nil}
+		if err != nil {
+			step.Error = err.Error()
+			logAlert("stale_inventory", "", err)
+		}
+		result.Steps = append(result.Steps, step)
+	}
+	code := http.StatusOK
+	for _, step := range result.Steps {
+		if !step.OK {
+			code = http.StatusServiceUnavailable
+		}
+	}
+	writeJSON(w, code, result)
+}
+
+func liveEnabled(c *config.Config) bool {
+	return c.SchemaVersion >= 2 && c.EnforcementEnabled && c.Defaults.DryRun != nil && !*c.Defaults.DryRun
 }
 
 func (s *Server) reconcile(w http.ResponseWriter, r *http.Request) {
@@ -340,6 +367,19 @@ func (s *Server) reconcile(w http.ResponseWriter, r *http.Request) {
 	}
 	if result.Summary.Errors > 0 {
 		logAlert("reconciliation_error", "", fmt.Errorf("reconciliation reported %d errors", result.Summary.Errors))
+		writeJSON(w, http.StatusServiceUnavailable, result)
+		return
+	}
+	if cfg.SchemaVersion >= 2 {
+		err = readiness.CheckFresh(cfg, time.Now().UTC())
+		if err == nil && liveEnabled(cfg) {
+			err = s.opt.ReadinessCheck(r.Context(), cfg)
+		}
+		if err != nil {
+			logAlert("stale_inventory", "", err)
+			writeJSON(w, http.StatusServiceUnavailable, map[string]any{"result": result, "readinessError": err.Error()})
+			return
+		}
 	}
 	writeJSON(w, http.StatusOK, result)
 }

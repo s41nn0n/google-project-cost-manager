@@ -1,5 +1,9 @@
 # Explicit operator approval for urgent onboarding
 
+For repeat onboarding and recovery, prefer the explicit
+[qualified-system migration](qualified-project-onboarding.md). This older,
+single-addition approval remains immutable and retains its original restrictions.
+
 Default rollout verification still requires seven genuine daily observations and
 a recent observed billing-toggle test for the exact policy/release. An operator
 can explicitly accept an already validated deployment when adding one project,
