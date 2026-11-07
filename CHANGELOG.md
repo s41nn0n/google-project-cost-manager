@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.1.0](https://github.com/s41nn0n/google-project-cost-manager/compare/v1.0.5...v1.1.0) (2026-11-07)
+
+
+### Features
+
+* allow explicit validated deployment transition for urgent onboarding ([9dcb763](https://github.com/s41nn0n/google-project-cost-manager/commit/9dcb763044a841c018913bfcb7e62118b28128c5))
+
+
+### Bug Fixes
+
+* **deps:** patch x/net advisory before runtime rollout ([d6a7a65](https://github.com/s41nn0n/google-project-cost-manager/commit/d6a7a65034043614157075964a4e75316ab00c00))
+* isolate project onboarding and recover validated enforcement ([25868b5](https://github.com/s41nn0n/google-project-cost-manager/commit/25868b5c61c5058eb8aacf809f8ff233f0ecf8cd))
+* preserve failed readiness and retry budget enforcement ([1ecded8](https://github.com/s41nn0n/google-project-cost-manager/commit/1ecded854d95e00c4ff44c5875bf3690781d51d5))
+
 ## [1.0.5](https://github.com/s41nn0n/google-project-cost-manager/compare/v1.0.4...v1.0.5) (2026-10-27)
 
 
