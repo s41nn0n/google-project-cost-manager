@@ -29,6 +29,7 @@ func TestHealthAndSetupValidationExposeBlockedEnforcement(t *testing.T) {
 				return nil
 			},
 			ReconcileLister: fakeBudgetLister{}, ProjectResolver: fakeProjectResolver{},
+			RecordReconciliation: func(context.Context, *config.Config, time.Time, time.Time, reconcile.Result, error) error { return nil },
 			ReconcileRunner: func(context.Context, *config.Config, reconcile.BudgetLister, reconcile.ProjectResolver) (reconcile.Result, error) {
 				return reconcile.Result{Summary: reconcile.Summary{ConfiguredBudgets: 1}}, nil
 			},

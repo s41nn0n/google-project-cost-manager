@@ -52,8 +52,15 @@ func disposition(previous record, event Event, now time.Time) string {
 	if previous.Status == "completed" && previous.MessageID == event.MessageID {
 		return Duplicate
 	}
-	if previous.MessageID != event.MessageID && ((!previous.PublishTime.IsZero() && !event.PublishTime.After(previous.PublishTime)) || event.CostAmount < previous.CostAmount) {
-		return OutOfOrder
+	if previous.MessageID != event.MessageID {
+		if !previous.PublishTime.IsZero() && !event.PublishTime.After(previous.PublishTime) {
+			return OutOfOrder
+		}
+		// An unsuccessful attempt is not a processed-spend watermark. A newer
+		// qualifying alert can retry even if reported costs have decreased.
+		if previous.Status == "completed" && event.CostAmount < previous.CostAmount {
+			return OutOfOrder
+		}
 	}
 	return Accepted
 }

@@ -27,18 +27,20 @@ const (
 
 type ReconcileRunner func(context.Context, *config.Config, reconcile.BudgetLister, reconcile.ProjectResolver) (reconcile.Result, error)
 type EventStoreFactory func(context.Context, config.EventStateConfig) (eventstate.Store, error)
+type ReconciliationRecorder func(context.Context, *config.Config, time.Time, time.Time, reconcile.Result, error) error
 
 type Options struct {
-	Billing           billing.Client
-	LoadConfig        func(context.Context) (*config.Config, error)
-	SelfTestStore     selftest.Store
-	ReconcileLister   reconcile.BudgetLister
-	ProjectResolver   reconcile.ProjectResolver
-	ReconcileRunner   ReconcileRunner
-	EventStore        eventstate.Store
-	EventStoreFactory EventStoreFactory
-	RouteMode         string
-	ReadinessCheck    func(context.Context, *config.Config) error
+	Billing              billing.Client
+	LoadConfig           func(context.Context) (*config.Config, error)
+	SelfTestStore        selftest.Store
+	ReconcileLister      reconcile.BudgetLister
+	ProjectResolver      reconcile.ProjectResolver
+	ReconcileRunner      ReconcileRunner
+	RecordReconciliation ReconciliationRecorder
+	EventStore           eventstate.Store
+	EventStoreFactory    EventStoreFactory
+	RouteMode            string
+	ReadinessCheck       func(context.Context, *config.Config) error
 }
 
 type Server struct {
@@ -264,6 +266,7 @@ func (s *Server) selfTest(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewDecoder(r.Body).Decode(&req)
 	cfg, err := s.opt.LoadConfig(r.Context())
 	if err != nil {
+		logAlert("reconciliation_error", "", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -283,15 +286,12 @@ func (s *Server) selfTest(w http.ResponseWriter, r *http.Request) {
 	if mode == "setup_validation" {
 		lister, resolver, err := s.reconcileClients(r.Context())
 		if err != nil {
+			logAlert("reconciliation_error", "", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		reconcileRunner := s.opt.ReconcileRunner
-		if reconcileRunner == nil {
-			reconcileRunner = reconcile.Run
-		}
 		runner = func(ctx context.Context, cfg *config.Config) (reconcile.Result, error) {
-			return reconcileRunner(ctx, cfg, lister, resolver)
+			return s.runReconciliation(ctx, cfg, lister, resolver)
 		}
 	} else if client == nil && mode != "dry_run" {
 		client, err = billing.NewCloudClient(r.Context())
@@ -341,32 +341,12 @@ func (s *Server) reconcile(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	runner := s.opt.ReconcileRunner
-	if runner == nil {
-		runner = reconcile.Run
-	}
-	result, err := runner(r.Context(), cfg, lister, resolver)
-	if cfg.SchemaVersion >= 2 {
-		passed := err == nil && result.Summary.Errors == 0 && readiness.CheckFresh(cfg, time.Now().UTC()) == nil
-		evidence, openErr := readiness.New(r.Context(), cfg)
-		if openErr == nil {
-			openErr = evidence.RecordReconciliation(r.Context(), cfg, time.Now().UTC(), result, err)
-			_ = evidence.Close()
-		}
-		if openErr != nil {
-			err = fmt.Errorf("persist reconciliation evidence: %w", openErr)
-		}
-		if !passed {
-			logAlert("stale_inventory", "", errors.New("reconciliation or inventory freshness check failed"))
-		}
-	}
+	result, err := s.runReconciliation(r.Context(), cfg, lister, resolver)
 	if err != nil {
-		logAlert("reconciliation_error", "", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	if result.Summary.Errors > 0 {
-		logAlert("reconciliation_error", "", fmt.Errorf("reconciliation reported %d errors", result.Summary.Errors))
 		writeJSON(w, http.StatusServiceUnavailable, result)
 		return
 	}
@@ -382,6 +362,45 @@ func (s *Server) reconcile(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusOK, result)
+}
+
+// Both scheduled routes record real observations with the same ordering fence.
+// A failed self-test must alert and invalidate current health just like /reconcile.
+func (s *Server) runReconciliation(ctx context.Context, cfg *config.Config, lister reconcile.BudgetLister, resolver reconcile.ProjectResolver) (reconcile.Result, error) {
+	runner := s.opt.ReconcileRunner
+	if runner == nil {
+		runner = reconcile.Run
+	}
+	startedAt := time.Now().UTC()
+	result, err := runner(ctx, cfg, lister, resolver)
+	completedAt := time.Now().UTC()
+	if cfg.SchemaVersion >= 2 {
+		passed := err == nil && result.Summary.Errors == 0 && readiness.CheckFresh(cfg, time.Now().UTC()) == nil
+		var openErr error
+		if s.opt.RecordReconciliation != nil {
+			openErr = s.opt.RecordReconciliation(ctx, cfg, startedAt, completedAt, result, err)
+		} else {
+			evidence, stateErr := readiness.New(ctx, cfg)
+			openErr = stateErr
+			if openErr == nil {
+				openErr = evidence.RecordReconciliationRun(ctx, cfg, startedAt, completedAt, result, err)
+				_ = evidence.Close()
+			}
+		}
+		if openErr != nil {
+			err = fmt.Errorf("persist reconciliation evidence: %w", openErr)
+		}
+		if !passed {
+			logAlert("stale_inventory", "", errors.New("reconciliation or inventory freshness check failed"))
+		}
+	}
+	if err != nil {
+		logAlert("reconciliation_error", "", err)
+	}
+	if result.Summary.Errors > 0 {
+		logAlert("reconciliation_error", "", fmt.Errorf("reconciliation reported %d errors", result.Summary.Errors))
+	}
+	return result, err
 }
 
 func (s *Server) reconcileClients(ctx context.Context) (reconcile.BudgetLister, reconcile.ProjectResolver, error) {

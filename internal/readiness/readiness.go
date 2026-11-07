@@ -21,8 +21,9 @@ type Evidence struct {
 	ToggleProject string          `json:"toggleProject" firestore:"toggleProject"`
 	ToggleAt      time.Time       `json:"toggleAt" firestore:"toggleAt"`
 	// Current observations are separate from the immutable daily failure history.
-	LastReconciledAt time.Time `json:"lastReconciledAt,omitempty" firestore:"lastReconciledAt,omitempty"`
-	LastPassed       bool      `json:"lastPassed" firestore:"lastPassed"`
+	LastReconciledAt            time.Time `json:"lastReconciledAt,omitempty" firestore:"lastReconciledAt,omitempty"`
+	LastReconciliationStartedAt time.Time `json:"lastReconciliationStartedAt,omitempty" firestore:"lastReconciliationStartedAt,omitempty"`
+	LastPassed                  bool      `json:"lastPassed" firestore:"lastPassed"`
 }
 
 func Fingerprint(c *config.Config) string {

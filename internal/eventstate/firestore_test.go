@@ -51,3 +51,43 @@ func TestFirestoreLeaseRecoveryAndFencing(t *testing.T) {
 		t.Fatalf("completed %s %v", d, err)
 	}
 }
+
+func TestFirestoreFailedAttemptDoesNotSuppressNewerLowerSpend(t *testing.T) {
+	host := os.Getenv("FIRESTORE_EMULATOR_HOST")
+	if host == "" {
+		t.Skip("local Firestore emulator required")
+	}
+	if !strings.HasPrefix(host, "127.0.0.1:") && !strings.HasPrefix(host, "localhost:") {
+		t.Fatal("loopback emulator required")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	collection := "test-retry-" + uuid.NewString()
+	firstWorker, err := NewFirestoreStore(ctx, "finops-security-test", "(default)", collection)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer firstWorker.client.Close()
+	secondWorker, err := NewFirestoreStore(ctx, "finops-security-test", "(default)", collection)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer secondWorker.client.Close()
+	first := Event{MessageID: "failed", PublishTime: time.Now().UTC(), CostAmount: 20}
+	if d, err := firstWorker.Claim(ctx, "key", &first); err != nil || d != Accepted {
+		t.Fatal(d, err)
+	}
+	if err := firstWorker.Complete(ctx, "key", first, false); err != nil {
+		t.Fatal(err)
+	}
+	next := Event{MessageID: "retry-new", PublishTime: first.PublishTime.Add(time.Minute), CostAmount: 18}
+	if d, err := secondWorker.Claim(ctx, "key", &next); err != nil || d != Accepted {
+		t.Fatal(d, err)
+	}
+	if err := secondWorker.Complete(ctx, "key", next, true); err != nil {
+		t.Fatal(err)
+	}
+	if d, err := firstWorker.Claim(ctx, "key", &next); err != nil || d != Duplicate {
+		t.Fatal(d, err)
+	}
+}

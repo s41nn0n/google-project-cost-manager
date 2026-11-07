@@ -48,6 +48,8 @@ project reconciliation within 36 hours, and the independent operator switch.
 Current observations are stored separately from daily history. A later successful
 preflight can restore current health after a repair while the failed daily entry
 remains false. Old or simultaneous successes cannot overwrite a newer failure.
+Both scheduled routes use [ordered observations](safety-failure-recovery.md),
+and failed setup validation emits the monitored safety alert.
 Errors attributed to one project do not poison other projects' event checks;
 incomplete/unattributed results or stale inventory fail every affected scope.
 
